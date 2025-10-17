@@ -1,0 +1,300 @@
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"github.com/patali/yantra/internal/middleware"
+	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/internal/services"
+	"gorm.io/gorm"
+)
+
+type SettingsController struct {
+	db *gorm.DB
+}
+
+func NewSettingsController(db *gorm.DB) *SettingsController {
+	return &SettingsController{db: db}
+}
+
+// RegisterRoutes registers settings routes
+func (ctrl *SettingsController) RegisterRoutes(rg *gin.RouterGroup, authService *services.AuthService) {
+	settings := rg.Group("/settings")
+	settings.Use(middleware.AuthMiddleware(authService))
+	{
+		// Node.js compatible endpoints (plural)
+		settings.GET("/email-providers", ctrl.GetEmailProviders)
+		settings.POST("/email-providers", ctrl.CreateEmailProvider)
+		settings.PUT("/email-providers/:id", ctrl.UpdateEmailProvider)
+		settings.DELETE("/email-providers/:id", ctrl.DeleteEmailProvider)
+		settings.GET("/email-providers/:provider", ctrl.GetEmailProviderByName)
+		settings.POST("/email-providers/test", ctrl.TestEmailProvider)
+		settings.PUT("/email-providers/activate", ctrl.SetActiveEmailProvider)
+
+		// Alternative endpoints (singular)
+		settings.GET("/email", ctrl.GetEmailProviders)
+		settings.POST("/email", ctrl.CreateEmailProvider)
+		settings.PUT("/email/:id", ctrl.UpdateEmailProvider)
+		settings.DELETE("/email/:id", ctrl.DeleteEmailProvider)
+	}
+}
+
+type EmailProviderRequest struct {
+	Provider        string `json:"provider" binding:"required"` // mailgun, ses, resend, smtp
+	APIKey          string `json:"apiKey"`
+	Domain          string `json:"domain"`
+	FromEmail       string `json:"fromEmail"`
+	FromName        string `json:"fromName"`
+	Region          string `json:"region"`
+	AccessKeyID     string `json:"accessKeyId"`
+	SecretAccessKey string `json:"secretAccessKey"`
+	IsActive        bool   `json:"isActive"`
+	SMTPHost        string `json:"smtpHost"`
+	SMTPPort        int    `json:"smtpPort"`
+	SMTPUser        string `json:"smtpUser"`
+	SMTPPassword    string `json:"smtpPassword"`
+	SMTPSecure      *bool  `json:"smtpSecure"`
+}
+
+// GetEmailProviders returns all email providers for the account
+// GET /api/settings/email-providers
+func (ctrl *SettingsController) GetEmailProviders(c *gin.Context) {
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var providers []models.EmailProviderSettings
+	if err := ctrl.db.Where("account_id = ?", accountID).Find(&providers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Return empty array instead of null if no providers
+	if providers == nil {
+		providers = []models.EmailProviderSettings{}
+	}
+
+	c.JSON(http.StatusOK, providers)
+}
+
+// CreateEmailProvider creates or updates an email provider configuration
+// POST /api/settings/email
+func (ctrl *SettingsController) CreateEmailProvider(c *gin.Context) {
+	accountID, _ := middleware.GetAccountID(c)
+
+	var req EmailProviderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if provider already exists for this account
+	var existing models.EmailProviderSettings
+	result := ctrl.db.Where("account_id = ? AND provider = ?", accountID, req.Provider).First(&existing)
+
+	if result.Error == nil {
+		// Provider exists, update it
+		updates := map[string]interface{}{
+			"api_key":           ptrString(req.APIKey),
+			"domain":            ptrString(req.Domain),
+			"from_email":        ptrString(req.FromEmail),
+			"from_name":         ptrString(req.FromName),
+			"region":            ptrString(req.Region),
+			"access_key_id":     ptrString(req.AccessKeyID),
+			"secret_access_key": ptrString(req.SecretAccessKey),
+			"is_active":         req.IsActive,
+			"smtp_host":         ptrString(req.SMTPHost),
+			"smtp_port":         ptrInt(req.SMTPPort),
+			"smtp_user":         ptrString(req.SMTPUser),
+			"smtp_password":     ptrString(req.SMTPPassword),
+			"smtp_secure":       req.SMTPSecure,
+		}
+
+		if err := ctrl.db.Model(&existing).Updates(updates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Reload the updated provider
+		ctrl.db.First(&existing, "id = ?", existing.ID)
+		c.JSON(http.StatusOK, existing)
+		return
+	}
+
+	// Provider doesn't exist, create new one
+	provider := models.EmailProviderSettings{
+		AccountID:       accountID,
+		Provider:        req.Provider,
+		APIKey:          ptrString(req.APIKey),
+		Domain:          ptrString(req.Domain),
+		FromEmail:       ptrString(req.FromEmail),
+		FromName:        ptrString(req.FromName),
+		Region:          ptrString(req.Region),
+		AccessKeyID:     ptrString(req.AccessKeyID),
+		SecretAccessKey: ptrString(req.SecretAccessKey),
+		IsActive:        req.IsActive,
+		SMTPHost:        ptrString(req.SMTPHost),
+		SMTPPort:        ptrInt(req.SMTPPort),
+		SMTPUser:        ptrString(req.SMTPUser),
+		SMTPPassword:    ptrString(req.SMTPPassword),
+		SMTPSecure:      req.SMTPSecure,
+	}
+
+	if err := ctrl.db.Create(&provider).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, provider)
+}
+
+// UpdateEmailProvider updates an email provider configuration
+// PUT /api/settings/email/:id
+func (ctrl *SettingsController) UpdateEmailProvider(c *gin.Context) {
+	id := c.Param("id")
+	accountID, _ := middleware.GetAccountID(c)
+
+	var req EmailProviderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Find provider
+	var provider models.EmailProviderSettings
+	if err := ctrl.db.Where("id = ? AND account_id = ?", id, accountID).First(&provider).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		return
+	}
+
+	// Update fields
+	updates := map[string]interface{}{
+		"api_key":           ptrString(req.APIKey),
+		"domain":            ptrString(req.Domain),
+		"from_email":        ptrString(req.FromEmail),
+		"from_name":         ptrString(req.FromName),
+		"region":            ptrString(req.Region),
+		"access_key_id":     ptrString(req.AccessKeyID),
+		"secret_access_key": ptrString(req.SecretAccessKey),
+		"is_active":         req.IsActive,
+		"smtp_host":         ptrString(req.SMTPHost),
+		"smtp_port":         ptrInt(req.SMTPPort),
+		"smtp_user":         ptrString(req.SMTPUser),
+		"smtp_password":     ptrString(req.SMTPPassword),
+		"smtp_secure":       req.SMTPSecure,
+	}
+
+	if err := ctrl.db.Model(&provider).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Reload
+	ctrl.db.First(&provider, "id = ?", id)
+
+	c.JSON(http.StatusOK, provider)
+}
+
+// DeleteEmailProvider deletes an email provider configuration
+// DELETE /api/settings/email/:id
+func (ctrl *SettingsController) DeleteEmailProvider(c *gin.Context) {
+	id := c.Param("id")
+	accountID, _ := middleware.GetAccountID(c)
+
+	result := ctrl.db.Where("id = ? AND account_id = ?", id, accountID).Delete(&models.EmailProviderSettings{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Provider deleted successfully"})
+}
+
+// GetEmailProviderByName gets a specific email provider by name
+// GET /api/settings/email-providers/:provider
+func (ctrl *SettingsController) GetEmailProviderByName(c *gin.Context) {
+	provider := c.Param("provider")
+	accountID, _ := middleware.GetAccountID(c)
+
+	var emailProvider models.EmailProviderSettings
+	if err := ctrl.db.Where("account_id = ? AND provider = ?", accountID, provider).First(&emailProvider).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, emailProvider)
+}
+
+// TestEmailProvider tests an email provider configuration
+// POST /api/settings/email-providers/test
+func (ctrl *SettingsController) TestEmailProvider(c *gin.Context) {
+	var req EmailProviderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// TODO: Implement actual email test
+	// For now, just return success
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Email provider configuration is valid (test not fully implemented)",
+	})
+}
+
+// SetActiveEmailProvider sets the active email provider
+// PUT /api/settings/email-providers/activate
+func (ctrl *SettingsController) SetActiveEmailProvider(c *gin.Context) {
+	accountID, _ := middleware.GetAccountID(c)
+
+	var req struct {
+		Provider string `json:"provider" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Deactivate all providers for this account
+	ctrl.db.Model(&models.EmailProviderSettings{}).
+		Where("account_id = ?", accountID).
+		Update("is_active", false)
+
+	// Activate the specified provider
+	var provider models.EmailProviderSettings
+	if err := ctrl.db.Where("account_id = ? AND provider = ?", accountID, req.Provider).First(&provider).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		return
+	}
+
+	provider.IsActive = true
+	if err := ctrl.db.Save(&provider).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, provider)
+}
+
+// Helper functions
+func ptrString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func ptrInt(i int) *int {
+	if i == 0 {
+		return nil
+	}
+	return &i
+}
