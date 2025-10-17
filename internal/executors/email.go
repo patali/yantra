@@ -147,23 +147,23 @@ func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{}) string {
 	// Match patterns like {{input.field}} or {{variable}}
 	re := regexp.MustCompile(`\{\{([^}]+)\}\}`)
-	
+
 	result := re.ReplaceAllStringFunc(text, func(match string) string {
 		// Extract the variable name (remove {{ and }})
 		varName := strings.TrimSpace(match[2 : len(match)-2])
-		
+
 		// Get the value from input
 		value := e.getValueFromPath(input, varName)
-		
+
 		// Convert to string
 		if value != nil {
 			return fmt.Sprintf("%v", value)
 		}
-		
+
 		// If not found, keep the original placeholder
 		return match
 	})
-	
+
 	return result
 }
 
@@ -172,13 +172,13 @@ func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{})
 func (e *EmailExecutor) getValueFromPath(data interface{}, path string) interface{} {
 	parts := strings.Split(path, ".")
 	current := data
-	
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		
+
 		// Try to navigate deeper
 		switch v := current.(type) {
 		case map[string]interface{}:
@@ -191,6 +191,6 @@ func (e *EmailExecutor) getValueFromPath(data interface{}, path string) interfac
 			return nil
 		}
 	}
-	
+
 	return current
 }

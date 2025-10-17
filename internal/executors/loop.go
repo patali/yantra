@@ -17,19 +17,19 @@ func (e *LoopExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	// Debug: Print input structure
 	inputJSON, _ := json.MarshalIndent(execCtx.Input, "", "  ")
 	fmt.Printf("🔍 Loop node input: %s\n", string(inputJSON))
-	
+
 	// Get arrayPath from config (e.g., "data" or "data.users")
 	arrayPath, _ := execCtx.NodeConfig["arrayPath"].(string)
 	fmt.Printf("🔍 Loop arrayPath config: '%s'\n", arrayPath)
-	
+
 	var items []interface{}
 	var ok bool
-	
+
 	// If arrayPath is provided, navigate to it
 	if arrayPath != "" && strings.TrimSpace(arrayPath) != "" {
 		// Remove "input." prefix if user added it
 		arrayPath = strings.TrimPrefix(arrayPath, "input.")
-		
+
 		items, ok = e.extractArrayFromPath(execCtx.Input, arrayPath)
 		if !ok {
 			return &ExecutionResult{
@@ -83,7 +83,7 @@ func (e *LoopExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	if iv, ok := execCtx.NodeConfig["itemVariable"].(string); ok && iv != "" {
 		itemVariable = iv
 	}
-	
+
 	indexVariable := "index"
 	if iv, ok := execCtx.NodeConfig["indexVariable"].(string); ok && iv != "" {
 		indexVariable = iv

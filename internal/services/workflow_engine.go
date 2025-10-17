@@ -112,7 +112,7 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 	// Build node map and adjacency list
 	nodeMap := make(map[string]map[string]interface{})
 	adjacencyList := make(map[string][]string) // nodeID -> [targetNodeIDs]
-	inDegree := make(map[string]int)            // nodeID -> number of incoming edges
+	inDegree := make(map[string]int)           // nodeID -> number of incoming edges
 
 	// Parse nodes
 	for _, nodeData := range nodes {
