@@ -584,6 +584,116 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*Executi
 	return response, nil
 }
 
+// GetAllWorkflowExecutions returns all workflow executions with optional filtering
+func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]ExecutionResponse, error) {
+	var executions []models.WorkflowExecution
+	query := s.db.Order("started_at DESC").Limit(limit)
+
+	// Apply status filter if provided
+	if status != "" && status != "all" {
+		query = query.Where("status = ?", status)
+	}
+
+	err := query.Find(&executions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch executions: %w", err)
+	}
+
+	return s.convertExecutionsToResponses(executions), nil
+}
+
+// GetFailedWorkflowExecutions returns all failed and partially failed workflow executions
+func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]ExecutionResponse, error) {
+	var executions []models.WorkflowExecution
+	err := s.db.Where("status IN ?", []string{"error", "partially_failed"}).
+		Order("started_at DESC").
+		Limit(limit).
+		Find(&executions).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch failed executions: %w", err)
+	}
+
+	return s.convertExecutionsToResponses(executions), nil
+}
+
+// convertExecutionsToResponses converts execution models to response DTOs
+func (s *WorkflowService) convertExecutionsToResponses(executions []models.WorkflowExecution) []ExecutionResponse {
+	responses := make([]ExecutionResponse, len(executions))
+	for i, exec := range executions {
+		// Get node executions
+		var nodeExecutions []models.WorkflowNodeExecution
+		s.db.Where("execution_id = ?", exec.ID).
+			Order("started_at DESC").
+			Find(&nodeExecutions)
+
+		// Convert node executions
+		nodeExecResponses := make([]NodeExecutionResponse, len(nodeExecutions))
+		for j, ne := range nodeExecutions {
+			nodeExecResponses[j] = NodeExecutionResponse{
+				ID:          ne.ID,
+				ExecutionID: ne.ExecutionID,
+				NodeID:      ne.NodeID,
+				NodeType:    ne.NodeType,
+				Status:      ne.Status,
+				Input:       ne.Input,
+				Output:      ne.Output,
+				Error:       ne.Error,
+				StartedAt:   &ne.StartedAt,
+				CompletedAt: ne.CompletedAt,
+			}
+		}
+
+		// Get workflow details
+		var workflow models.Workflow
+		var workflowResp *WorkflowResponse
+		if err := s.db.First(&workflow, "id = ?", exec.WorkflowID).Error; err == nil {
+			workflowResp = &WorkflowResponse{
+				ID:   workflow.ID,
+				Name: workflow.Name,
+			}
+		}
+
+		responses[i] = ExecutionResponse{
+			ID:             exec.ID,
+			WorkflowID:     exec.WorkflowID,
+			Workflow:       workflowResp,
+			Version:        exec.Version,
+			Status:         exec.Status,
+			TriggerType:    exec.TriggerType,
+			Input:          exec.Input,
+			Output:         exec.Output,
+			Error:          exec.Error,
+			StartedAt:      &exec.StartedAt,
+			CompletedAt:    exec.CompletedAt,
+			NodeExecutions: nodeExecResponses,
+		}
+	}
+
+	return responses
+}
+
+// CancelWorkflowExecution cancels a running or queued workflow execution
+func (s *WorkflowService) CancelWorkflowExecution(executionID string) error {
+	var execution models.WorkflowExecution
+	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		return fmt.Errorf("execution not found: %w", err)
+	}
+
+	// Only running or queued executions can be cancelled
+	if execution.Status != "running" && execution.Status != "queued" {
+		return fmt.Errorf("only running or queued executions can be cancelled")
+	}
+
+	// Update execution status to cancelled
+	now := time.Now()
+	return s.db.Model(&execution).Updates(map[string]interface{}{
+		"status":       "cancelled",
+		"completed_at": now,
+		"error":        "Execution cancelled by user",
+	}).Error
+}
+
 // RestoreWorkflowVersion restores a workflow to a previous version
 func (s *WorkflowService) RestoreWorkflowVersion(id string, version int) error {
 	// Get the version

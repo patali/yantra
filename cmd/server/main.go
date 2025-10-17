@@ -129,6 +129,10 @@ func main() {
 		// Settings routes
 		settingsController := controllers.NewSettingsController(database.DB)
 		settingsController.RegisterRoutes(api, authService)
+
+		// Recovery routes
+		recoveryController := controllers.NewRecoveryController(outboxService, workflowService, workflowEngine)
+		recoveryController.RegisterRoutes(api, authService)
 	}
 
 	// Create HTTP server

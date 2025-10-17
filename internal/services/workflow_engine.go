@@ -88,12 +88,27 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 		return err
 	}
 
-	s.db.Model(&execution).Updates(map[string]interface{}{
-		"status":       "success",
-		"completed_at": now,
-	})
+	// Check if there are any pending outbox messages
+	var pendingCount int64
+	s.db.Model(&models.OutboxMessage{}).
+		Joins("JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+		Where("workflow_node_executions.execution_id = ? AND outbox_messages.status IN ?",
+			execution.ID, []string{"pending", "processing"}).
+		Count(&pendingCount)
 
-	log.Printf("✅ Workflow execution completed: %s", workflowID)
+	if pendingCount > 0 {
+		// Workflow has pending async operations, keep it in running state
+		s.db.Model(&execution).Update("status", "running")
+		log.Printf("✅ Workflow execution completed with %d pending async operations: %s", pendingCount, workflowID)
+	} else {
+		// All operations completed
+		s.db.Model(&execution).Updates(map[string]interface{}{
+			"status":       "success",
+			"completed_at": now,
+		})
+		log.Printf("✅ Workflow execution completed: %s", workflowID)
+	}
+
 	return nil
 }
 

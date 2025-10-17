@@ -203,6 +203,7 @@ func (ctrl *WorkflowController) GetWorkflowExecutions(c *gin.Context) {
 // GET /api/workflows/:id/executions/:executionId
 func (ctrl *WorkflowController) GetWorkflowExecutionById(c *gin.Context) {
 	executionId := c.Param("executionId")
+	includeRecovery := c.Query("includeRecovery") == "true"
 
 	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionId)
 	if err != nil {
@@ -210,7 +211,22 @@ func (ctrl *WorkflowController) GetWorkflowExecutionById(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, execution)
+	if !includeRecovery {
+		c.JSON(http.StatusOK, execution)
+		return
+	}
+
+	// Include recovery options
+	response := gin.H{
+		"execution": execution,
+		"recoveryOptions": gin.H{
+			"canRestartWorkflow": execution.Status == "error" || execution.Status == "partially_failed",
+			"canRetryNodes":      getRetryableNodes(execution.NodeExecutions),
+			"deadLetterMessages": []gin.H{}, // Will be populated by outbox service
+		},
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // RestoreVersion restores a workflow to a previous version
@@ -232,4 +248,21 @@ func (ctrl *WorkflowController) RestoreVersion(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Version restored successfully"})
+}
+
+// getRetryableNodes returns a list of node IDs that can be retried
+func getRetryableNodes(nodeExecutions []services.NodeExecutionResponse) []string {
+	var retryableNodes []string
+
+	for _, nodeExec := range nodeExecutions {
+		if nodeExec.Status == "error" {
+			// Only asynchronous nodes can be retried individually
+			switch nodeExec.NodeType {
+			case "email", "http", "slack":
+				retryableNodes = append(retryableNodes, nodeExec.NodeID)
+			}
+		}
+	}
+
+	return retryableNodes
 }

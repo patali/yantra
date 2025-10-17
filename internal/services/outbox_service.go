@@ -163,6 +163,17 @@ func (s *OutboxService) MarkMessageCompleted(messageID string, output map[string
 			return err
 		}
 
+		// Get the execution ID to check if all async operations are complete
+		var nodeExecution models.WorkflowNodeExecution
+		if err := tx.First(&nodeExecution, "id = ?", message.NodeExecutionID).Error; err != nil {
+			return err
+		}
+
+		// Check if workflow execution is complete
+		if err := s.checkAndCompleteWorkflowExecution(tx, nodeExecution.ExecutionID); err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
@@ -196,7 +207,13 @@ func (s *OutboxService) MarkMessageFailed(messageID, errorMsg string) error {
 			updates["status"] = "dead_letter"
 			updates["next_retry_at"] = nil
 
-			// Also update node execution
+			// Get the node execution to find the workflow execution
+			var nodeExecution models.WorkflowNodeExecution
+			if err := tx.First(&nodeExecution, "id = ?", message.NodeExecutionID).Error; err != nil {
+				return err
+			}
+
+			// Update node execution
 			if err := tx.Model(&models.WorkflowNodeExecution{}).
 				Where("id = ?", message.NodeExecutionID).
 				Updates(map[string]interface{}{
@@ -204,6 +221,12 @@ func (s *OutboxService) MarkMessageFailed(messageID, errorMsg string) error {
 					"error":        fmt.Sprintf("Failed after %d attempts: %s", message.MaxAttempts, errorMsg),
 					"completed_at": time.Now(),
 				}).Error; err != nil {
+				return err
+			}
+
+			// Update workflow execution status to partially_failed
+			// Check if there are any other failed nodes or if all nodes are done
+			if err := s.updateWorkflowStatusOnNodeFailure(tx, nodeExecution.ExecutionID); err != nil {
 				return err
 			}
 		}
@@ -222,8 +245,6 @@ func (s *OutboxService) GetDeadLetterMessages(limit int) ([]models.OutboxMessage
 		Order("last_attempt_at DESC").
 		Limit(limit).
 		Preload("NodeExecution").
-		Preload("NodeExecution.Execution").
-		Preload("NodeExecution.Execution.Workflow").
 		Find(&messages).Error
 
 	if err != nil {
@@ -244,6 +265,90 @@ func (s *OutboxService) RetryDeadLetterMessage(messageID string) error {
 			"next_retry_at":   now,
 			"last_error":      nil,
 			"last_attempt_at": nil,
+		}).Error
+}
+
+// checkAndCompleteWorkflowExecution checks if all async operations are complete and marks workflow as success
+func (s *OutboxService) checkAndCompleteWorkflowExecution(tx *gorm.DB, executionID string) error {
+	// Get the workflow execution
+	var execution models.WorkflowExecution
+	if err := tx.First(&execution, "id = ?", executionID).Error; err != nil {
+		return err
+	}
+
+	// Only check if workflow is currently running
+	if execution.Status != "running" {
+		return nil
+	}
+
+	// Check if there are any pending/processing outbox messages
+	var pendingCount int64
+	tx.Model(&models.OutboxMessage{}).
+		Joins("JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+		Where("workflow_node_executions.execution_id = ? AND outbox_messages.status IN ?",
+			executionID, []string{"pending", "processing"}).
+		Count(&pendingCount)
+
+	// If no pending messages, mark workflow as complete
+	if pendingCount == 0 {
+		now := time.Now()
+		return tx.Model(&models.WorkflowExecution{}).
+			Where("id = ?", executionID).
+			Updates(map[string]interface{}{
+				"status":       "success",
+				"completed_at": now,
+			}).Error
+	}
+
+	return nil
+}
+
+// updateWorkflowStatusOnNodeFailure updates the workflow execution status when a node goes to dead letter
+func (s *OutboxService) updateWorkflowStatusOnNodeFailure(tx *gorm.DB, executionID string) error {
+	// Get the workflow execution
+	var execution models.WorkflowExecution
+	if err := tx.First(&execution, "id = ?", executionID).Error; err != nil {
+		return err
+	}
+
+	// Only update if the workflow is currently marked as success
+	if execution.Status != "success" {
+		return nil // Already marked as error or still running
+	}
+
+	// Count total nodes and failed nodes
+	var totalNodes int64
+	var failedNodes int64
+	var successNodes int64
+
+	tx.Model(&models.WorkflowNodeExecution{}).
+		Where("execution_id = ?", executionID).
+		Count(&totalNodes)
+
+	tx.Model(&models.WorkflowNodeExecution{}).
+		Where("execution_id = ? AND status = ?", executionID, "error").
+		Count(&failedNodes)
+
+	tx.Model(&models.WorkflowNodeExecution{}).
+		Where("execution_id = ? AND status = ?", executionID, "success").
+		Count(&successNodes)
+
+	// Determine the appropriate status
+	var newStatus string
+	if failedNodes > 0 && successNodes > 0 {
+		newStatus = "partially_failed"
+	} else if failedNodes > 0 {
+		newStatus = "error"
+	} else {
+		return nil // No update needed
+	}
+
+	// Update the workflow execution status
+	return tx.Model(&models.WorkflowExecution{}).
+		Where("id = ?", executionID).
+		Updates(map[string]interface{}{
+			"status": newStatus,
+			"error":  fmt.Sprintf("%d out of %d nodes failed", failedNodes, totalNodes),
 		}).Error
 }
 
