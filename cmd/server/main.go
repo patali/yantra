@@ -82,6 +82,12 @@ func main() {
 	outboxWorker.Start(ctx)
 	defer outboxWorker.Stop()
 
+	// Run cleanup routines on startup
+	cleanupService := services.NewCleanupService(database.DB)
+	if err := cleanupService.RunAllCleanups(ctx); err != nil {
+		log.Printf("⚠️  Warning: Cleanup routines encountered errors: %v", err)
+	}
+
 	// Initialize Gin router
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)

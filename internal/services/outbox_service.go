@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -185,6 +186,10 @@ func (s *OutboxService) MarkMessageFailed(messageID, errorMsg string) error {
 		return fmt.Errorf("message not found: %w", err)
 	}
 
+	log.Printf("  📊 Message %s: attempts=%d, maxAttempts=%d", messageID[:8], message.Attempts, message.MaxAttempts)
+
+	// The attempts counter has already been incremented in MarkMessageProcessing
+	// So we check if current attempts >= maxAttempts (not <)
 	shouldRetry := message.Attempts < message.MaxAttempts
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
@@ -202,11 +207,31 @@ func (s *OutboxService) MarkMessageFailed(messageID, errorMsg string) error {
 
 			updates["status"] = "pending"
 			updates["next_retry_at"] = nextRetry
+			log.Printf("  🔄 Message %s will retry (attempt %d/%d) in %v",
+				messageID[:8], message.Attempts, message.MaxAttempts, retryDelay)
 		} else {
 			// Move to dead letter queue
 			updates["status"] = "dead_letter"
 			updates["next_retry_at"] = nil
+			log.Printf("  💀 Message %s moving to dead letter (attempt %d/%d)",
+				messageID[:8], message.Attempts, message.MaxAttempts)
+		}
 
+		// IMPORTANT: Update message status FIRST before checking workflow status
+		// This ensures the pending count is accurate
+		err := tx.Model(&models.OutboxMessage{}).
+			Where("id = ?", messageID).
+			Updates(updates).Error
+
+		if err != nil {
+			log.Printf("  ❌ Failed to update message %s: %v", messageID[:8], err)
+			return err
+		}
+
+		log.Printf("  ✅ Message %s updated to status: %s", messageID[:8], updates["status"])
+
+		// If message went to dead letter, update node execution and check workflow status
+		if !shouldRetry {
 			// Get the node execution to find the workflow execution
 			var nodeExecution models.WorkflowNodeExecution
 			if err := tx.First(&nodeExecution, "id = ?", message.NodeExecutionID).Error; err != nil {
@@ -224,16 +249,14 @@ func (s *OutboxService) MarkMessageFailed(messageID, errorMsg string) error {
 				return err
 			}
 
-			// Update workflow execution status to partially_failed
-			// Check if there are any other failed nodes or if all nodes are done
+			// Update workflow execution status
+			// NOW the pending count will be correct because message is already dead_letter
 			if err := s.updateWorkflowStatusOnNodeFailure(tx, nodeExecution.ExecutionID); err != nil {
 				return err
 			}
 		}
 
-		return tx.Model(&models.OutboxMessage{}).
-			Where("id = ?", messageID).
-			Updates(updates).Error
+		return nil
 	})
 }
 
@@ -308,12 +331,16 @@ func (s *OutboxService) updateWorkflowStatusOnNodeFailure(tx *gorm.DB, execution
 	// Get the workflow execution
 	var execution models.WorkflowExecution
 	if err := tx.First(&execution, "id = ?", executionID).Error; err != nil {
+		log.Printf("❌ Failed to get execution %s: %v", executionID, err)
 		return err
 	}
 
-	// Only update if the workflow is currently marked as success
-	if execution.Status != "success" {
-		return nil // Already marked as error or still running
+	log.Printf("🔍 Checking workflow status for execution %s (current status: %s)", executionID, execution.Status)
+
+	// Only update if the workflow is currently running or success (not already in error state)
+	if execution.Status != "success" && execution.Status != "running" {
+		log.Printf("⏭️  Execution %s already in final state: %s", executionID, execution.Status)
+		return nil // Already marked as error or cancelled
 	}
 
 	// Count total nodes and failed nodes
@@ -333,23 +360,65 @@ func (s *OutboxService) updateWorkflowStatusOnNodeFailure(tx *gorm.DB, execution
 		Where("execution_id = ? AND status = ?", executionID, "success").
 		Count(&successNodes)
 
+	log.Printf("📊 Node stats for %s: total=%d, failed=%d, success=%d",
+		executionID, totalNodes, failedNodes, successNodes)
+
+	// Check if there are still pending async operations
+	var pendingCount int64
+	err := tx.Model(&models.OutboxMessage{}).
+		Joins("JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+		Where("workflow_node_executions.execution_id = ? AND outbox_messages.status IN ?",
+			executionID, []string{"pending", "processing"}).
+		Count(&pendingCount).Error
+
+	if err != nil {
+		log.Printf("❌ Failed to count pending messages for %s: %v", executionID, err)
+		return err
+	}
+
+	log.Printf("📬 Pending outbox messages for %s: %d", executionID, pendingCount)
+
 	// Determine the appropriate status
 	var newStatus string
+	var updates map[string]interface{}
+
+	if pendingCount > 0 {
+		// Still has pending operations, keep as running but note the failure
+		log.Printf("⏳ Execution %s still has %d pending operations, keeping as running", executionID, pendingCount)
+		return nil // Don't change status yet
+	}
+
+	// No more pending operations, determine final status
 	if failedNodes > 0 && successNodes > 0 {
 		newStatus = "partially_failed"
 	} else if failedNodes > 0 {
 		newStatus = "error"
 	} else {
-		return nil // No update needed
+		log.Printf("✅ No failures found for %s, no update needed", executionID)
+		return nil // No failures, should not reach here
 	}
 
 	// Update the workflow execution status
-	return tx.Model(&models.WorkflowExecution{}).
+	now := time.Now()
+	updates = map[string]interface{}{
+		"status":       newStatus,
+		"error":        fmt.Sprintf("%d out of %d nodes failed", failedNodes, totalNodes),
+		"completed_at": now,
+	}
+
+	log.Printf("🔄 Updating execution %s to %s", executionID, newStatus)
+
+	err = tx.Model(&models.WorkflowExecution{}).
 		Where("id = ?", executionID).
-		Updates(map[string]interface{}{
-			"status": newStatus,
-			"error":  fmt.Sprintf("%d out of %d nodes failed", failedNodes, totalNodes),
-		}).Error
+		Updates(updates).Error
+
+	if err != nil {
+		log.Printf("❌ Failed to update execution %s: %v", executionID, err)
+		return err
+	}
+
+	log.Printf("✅ Successfully updated execution %s to %s", executionID, newStatus)
+	return nil
 }
 
 // VerifyIntegrity checks for orphaned messages and inconsistencies
