@@ -139,6 +139,10 @@ func main() {
 		// Recovery routes
 		recoveryController := controllers.NewRecoveryController(outboxService, workflowService, workflowEngine)
 		recoveryController.RegisterRoutes(api, authService)
+
+		// Migration routes (protected by API key)
+		migrationController := controllers.NewMigrationController(database.DB)
+		migrationController.RegisterRoutes(api)
 	}
 
 	// Create HTTP server

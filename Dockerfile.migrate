@@ -1,0 +1,40 @@
+# Migration-only Dockerfile
+FROM golang:1.25-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the migration binary
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o migrate ./cmd/migrate/main.go
+
+# Install River CLI
+RUN go install github.com/riverqueue/river/cmd/river@latest
+
+# Runtime stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy migration binary and river CLI
+COPY --from=builder /app/migrate .
+COPY --from=builder /go/bin/river /usr/local/bin/river
+
+# Copy migration script
+COPY migrate.sh .
+RUN chmod +x migrate.sh
+
+# Run migrations
+CMD ["./migrate.sh"]
