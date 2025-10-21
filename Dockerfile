@@ -19,7 +19,10 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o yantra-server ./cmd/server
+# Use build arguments to support multi-platform builds
+ARG TARGETOS=linux
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o yantra-server ./cmd/server
 
 # Stage 2: Runtime
 FROM alpine:latest
