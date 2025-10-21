@@ -1,7 +1,7 @@
 # Multi-stage Docker build for Yantra Go backend
 
 # Stage 1: Build
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git
@@ -24,8 +24,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o yantra-server ./c
 # Stage 2: Runtime
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates tzdata
+# Install ca-certificates for HTTPS and wget for health checks
+RUN apk --no-cache add ca-certificates tzdata wget
 
 # Create non-root user
 RUN addgroup -g 1000 yantra && \
@@ -46,7 +46,7 @@ USER yantra
 EXPOSE 3000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
 # Run the application
