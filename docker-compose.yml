@@ -1,20 +1,6 @@
 version: '3.8'
 
 services:
-  # Migration service - run once manually or as a job
-  yantra-migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.migrate
-    container_name: yantra-migrate
-    env_file:
-      - .env
-    networks:
-      - coolify
-    profiles:
-      - migrate
-
-  # Main application service
   yantra-server:
     build:
       context: .

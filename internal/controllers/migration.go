@@ -75,19 +75,19 @@ func (ctrl *MigrationController) RunMigrations(c *gin.Context) {
 		return
 	}
 
-	results := make(map[string]interface{})
+	results := make(map[string]any)
 
 	// Run River migrations
 	riverCmd := exec.CommandContext(ctx, "river", "migrate-up", "--database-url", databaseURL)
 	riverOutput, riverErr := riverCmd.CombinedOutput()
 
-	results["river"] = map[string]interface{}{
+	results["river"] = map[string]any{
 		"output": string(riverOutput),
 		"error":  nil,
 	}
 
 	if riverErr != nil {
-		results["river"].(map[string]interface{})["error"] = riverErr.Error()
+		results["river"].(map[string]any)["error"] = riverErr.Error()
 	}
 
 	// Run GORM migrations
@@ -95,12 +95,12 @@ func (ctrl *MigrationController) RunMigrations(c *gin.Context) {
 		// Add all your models here - this should match what's in internal/db/db.go
 	)
 
-	results["gorm"] = map[string]interface{}{
+	results["gorm"] = map[string]any{
 		"error": nil,
 	}
 
 	if gormErr != nil {
-		results["gorm"].(map[string]interface{})["error"] = gormErr.Error()
+		results["gorm"].(map[string]any)["error"] = gormErr.Error()
 	}
 
 	// Determine overall status
