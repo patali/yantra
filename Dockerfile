@@ -52,6 +52,12 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
+# Install River CLI
+RUN go install github.com/riverqueue/river/cmd/river@latest
+
+# Run River migrations
+RUN river migrate-up --database-url $DATABASE_URL
+
 # Run the application
 CMD ["./yantra-server"]
 
