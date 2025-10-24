@@ -15,6 +15,9 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
+# Install River CLI for migrations
+RUN go install github.com/riverqueue/river/cmd/river@latest
+
 # Copy source code
 COPY . .
 
@@ -39,8 +42,15 @@ WORKDIR /home/yantra
 # Copy binary from builder
 COPY --from=builder /app/yantra-server .
 
-# Change ownership
-RUN chown -R yantra:yantra /home/yantra
+# Copy River CLI from builder
+COPY --from=builder /go/bin/river /usr/local/bin/river
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh /home/yantra/docker-entrypoint.sh
+
+# Make entrypoint executable and change ownership
+RUN chmod +x /home/yantra/docker-entrypoint.sh && \
+    chown -R yantra:yantra /home/yantra
 
 # Switch to non-root user
 USER yantra
@@ -50,8 +60,8 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 -O /dev/null http://localhost:3000/health || exit 1
 
-# Run the application
-CMD ["./yantra-server"]
+# Run the application via entrypoint script
+ENTRYPOINT ["./docker-entrypoint.sh"]
 
