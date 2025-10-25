@@ -3,9 +3,11 @@ package services
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/patali/yantra/internal/models"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -52,7 +54,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 
 func TestAuthService_CreateUser(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	req := CreateUserRequest{
 		Username: "testuser",
@@ -71,7 +73,7 @@ func TestAuthService_CreateUser(t *testing.T) {
 
 func TestAuthService_CreateUser_DuplicateEmail(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	req := CreateUserRequest{
 		Username: "testuser",
@@ -92,7 +94,7 @@ func TestAuthService_CreateUser_DuplicateEmail(t *testing.T) {
 
 func TestAuthService_Login(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -118,7 +120,7 @@ func TestAuthService_Login(t *testing.T) {
 
 func TestAuthService_Login_InvalidPassword(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -142,7 +144,7 @@ func TestAuthService_Login_InvalidPassword(t *testing.T) {
 
 func TestAuthService_SignupWithAccount(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	req := SignupWithAccountRequest{
 		Name:     "Test Account",
@@ -163,7 +165,7 @@ func TestAuthService_SignupWithAccount(t *testing.T) {
 
 func TestUserService_UpdatePassword(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 	userService := NewUserService(db)
 
 	// Create user
@@ -192,7 +194,7 @@ func TestUserService_UpdatePassword(t *testing.T) {
 
 func TestUserService_UpdatePassword_WrongCurrentPassword(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 	userService := NewUserService(db)
 
 	// Create user
@@ -212,7 +214,7 @@ func TestUserService_UpdatePassword_WrongCurrentPassword(t *testing.T) {
 
 func TestAuthService_RequestPasswordReset(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -227,7 +229,6 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 	resetResp, err := authService.RequestPasswordReset("test@example.com")
 	assert.NoError(t, err)
 	assert.NotNil(t, resetResp)
-	assert.NotEmpty(t, resetResp.Token) // Token returned for testing
 	assert.Contains(t, resetResp.Message, "password reset")
 
 	// Verify token was saved to database
@@ -239,7 +240,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 
 func TestAuthService_RequestPasswordReset_NonExistentEmail(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Request password reset for non-existent email (should still return success for security)
 	resetResp, err := authService.RequestPasswordReset("nonexistent@example.com")
@@ -250,7 +251,7 @@ func TestAuthService_RequestPasswordReset_NonExistentEmail(t *testing.T) {
 
 func TestAuthService_ResetPassword(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -262,12 +263,27 @@ func TestAuthService_ResetPassword(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Request password reset
-	resetResp, err := authService.RequestPasswordReset("test@example.com")
+	_, err = authService.RequestPasswordReset("test@example.com")
 	assert.NoError(t, err)
-	resetToken := resetResp.Token
+
+	// Get the reset token from database directly for testing
+	var userWithToken models.User
+	db.First(&userWithToken, "id = ?", user.ID)
+	assert.NotNil(t, userWithToken.ResetTokenHash)
+
+	// Since the token is hashed, we need to use a mock token
+	// For this test, we'll manually create a known token
+	testToken := "test-reset-token-123456789012345678901234567890123456789012345678"
+	hashedToken, _ := bcrypt.GenerateFromPassword([]byte(testToken), 10)
+	hashedTokenStr := string(hashedToken)
+	expiresAt := time.Now().Add(1 * time.Hour)
+	db.Model(&userWithToken).Updates(map[string]interface{}{
+		"reset_token_hash": hashedTokenStr,
+		"reset_token_exp":  expiresAt,
+	})
 
 	// Reset password with token
-	err = authService.ResetPassword(resetToken, "newpassword456")
+	err = authService.ResetPassword(testToken, "newpassword456")
 	assert.NoError(t, err)
 
 	// Verify new password works
@@ -289,7 +305,7 @@ func TestAuthService_ResetPassword(t *testing.T) {
 
 func TestAuthService_ResetPassword_InvalidToken(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -312,7 +328,7 @@ func TestAuthService_ResetPassword_InvalidToken(t *testing.T) {
 
 func TestAuthService_ResetPassword_ExpiredToken(t *testing.T) {
 	db := setupTestDB(t)
-	authService := NewAuthService(db, "test-secret")
+	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
 	req := CreateUserRequest{
@@ -324,18 +340,24 @@ func TestAuthService_ResetPassword_ExpiredToken(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Request password reset
-	resetResp, err := authService.RequestPasswordReset("test@example.com")
+	_, err = authService.RequestPasswordReset("test@example.com")
 	assert.NoError(t, err)
-	resetToken := resetResp.Token
 
-	// Manually expire the token by setting expiration to the past
+	// Create a test token and set it to expired
+	testToken := "expired-reset-token-123456789012345678901234567890123456789012"
+	hashedToken, _ := bcrypt.GenerateFromPassword([]byte(testToken), 10)
+	hashedTokenStr := string(hashedToken)
+	pastTime := user.CreatedAt // Use a time in the past
+
 	var updatedUser models.User
 	db.First(&updatedUser, "id = ?", user.ID)
-	pastTime := updatedUser.CreatedAt // Use a time in the past
-	db.Model(&updatedUser).Update("reset_token_exp", pastTime)
+	db.Model(&updatedUser).Updates(map[string]interface{}{
+		"reset_token_hash": hashedTokenStr,
+		"reset_token_exp":  pastTime,
+	})
 
 	// Try to reset with expired token
-	err = authService.ResetPassword(resetToken, "newpassword456")
+	err = authService.ResetPassword(testToken, "newpassword456")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid")
 }

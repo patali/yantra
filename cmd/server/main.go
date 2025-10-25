@@ -56,7 +56,8 @@ func main() {
 	defer riverClient.Stop(ctx)
 
 	// Initialize services
-	authService := services.NewAuthService(database.DB, cfg.JWTSecret)
+	systemEmailService := services.NewSystemEmailService(cfg)
+	authService := services.NewAuthService(database.DB, cfg.JWTSecret, systemEmailService)
 	queueService := services.NewQueueService(riverClient.GetClient())
 	workflowService := services.NewWorkflowService(database.DB, queueService)
 	accountService := services.NewAccountService(database.DB)

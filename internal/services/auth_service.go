@@ -13,14 +13,16 @@ import (
 )
 
 type AuthService struct {
-	db        *gorm.DB
-	jwtSecret string
+	db               *gorm.DB
+	jwtSecret        string
+	systemEmailSvc   *SystemEmailService
 }
 
-func NewAuthService(db *gorm.DB, jwtSecret string) *AuthService {
+func NewAuthService(db *gorm.DB, jwtSecret string, systemEmailSvc *SystemEmailService) *AuthService {
 	return &AuthService{
-		db:        db,
-		jwtSecret: jwtSecret,
+		db:             db,
+		jwtSecret:      jwtSecret,
+		systemEmailSvc: systemEmailSvc,
 	}
 }
 
@@ -330,15 +332,31 @@ func (s *AuthService) RequestPasswordReset(email string) (*PasswordResetResponse
 		return nil, fmt.Errorf("failed to save reset token: %w", err)
 	}
 
-	// TODO: Send email with reset token
-	// In production, you would send an email here with a link like:
-	// https://yourapp.com/reset-password?token={resetToken}
-	// For now, we'll return the token in the response for testing
+	// Send password reset email
+	if s.systemEmailSvc != nil {
+		html, text := s.systemEmailSvc.RenderPasswordResetEmail(resetToken)
+		err := s.systemEmailSvc.SendEmail(SystemEmailOptions{
+			To:      user.Email,
+			Subject: "Reset Your Password - Yantra",
+			HTML:    html,
+			Text:    text,
+		})
+		if err != nil {
+			// Log error but don't fail the request (security - don't reveal if email exists)
+			fmt.Printf("Warning: Failed to send password reset email to %s: %v\n", user.Email, err)
+		}
+	}
 
-	return &PasswordResetResponse{
+	response := &PasswordResetResponse{
 		Message: "If an account with that email exists, a password reset link has been sent",
-		Token:   resetToken, // Remove this in production
-	}, nil
+	}
+
+	// Only include token in development mode for testing
+	if s.systemEmailSvc != nil && s.systemEmailSvc.config.Environment == "development" {
+		response.Token = resetToken
+	}
+
+	return response, nil
 }
 
 // ResetPassword resets a user's password using a valid reset token
