@@ -110,10 +110,89 @@ func (e *TransformExecutor) extractWithJSONPath(config map[string]interface{}, d
 	return result, nil
 }
 
-// mapFields maps fields from input to output
+// mapFields maps fields from input to output according to a mapping configuration
+// Config should contain "mappings" which is an array of {from, to} or an object mapping
 func (e *TransformExecutor) mapFields(config map[string]interface{}, data interface{}) (interface{}, error) {
-	// TODO: Implement field mapping
-	return data, nil
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("data must be an object for map operation")
+	}
+
+	// Support two formats:
+	// 1. "mappings" as array of objects: [{from: "oldName", to: "newName"}, ...]
+	// 2. "mappings" as object: {"oldName": "newName", ...}
+
+	mappings := config["mappings"]
+	if mappings == nil {
+		return data, nil // No mappings specified, return as-is
+	}
+
+	result := make(map[string]interface{})
+
+	// Handle array format
+	if mappingsArray, ok := mappings.([]interface{}); ok {
+		// Start with original data
+		for k, v := range dataMap {
+			result[k] = v
+		}
+
+		// Apply mappings
+		for _, mappingItem := range mappingsArray {
+			mapping, ok := mappingItem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			fromField, _ := mapping["from"].(string)
+			toField, _ := mapping["to"].(string)
+
+			if fromField == "" || toField == "" {
+				continue
+			}
+
+			// Copy value from 'from' field to 'to' field
+			if value, exists := dataMap[fromField]; exists {
+				result[toField] = value
+
+				// If removeSource is true, remove the original field
+				if removeSource, ok := mapping["removeSource"].(bool); ok && removeSource {
+					delete(result, fromField)
+				}
+			}
+		}
+
+		return result, nil
+	}
+
+	// Handle object format (simple key-value mapping)
+	if mappingsObj, ok := mappings.(map[string]interface{}); ok {
+		for fromField, toFieldRaw := range mappingsObj {
+			toField, ok := toFieldRaw.(string)
+			if !ok {
+				continue
+			}
+
+			if value, exists := dataMap[fromField]; exists {
+				result[toField] = value
+			}
+		}
+
+		// Include fields that weren't mapped
+		includeUnmapped, _ := config["includeUnmapped"].(bool)
+		if includeUnmapped {
+			for k, v := range dataMap {
+				if _, exists := result[k]; !exists {
+					if _, isMapped := mappingsObj[k]; !isMapped {
+						result[k] = v
+					}
+				}
+			}
+		}
+
+		return result, nil
+	}
+
+	return nil, fmt.Errorf("mappings must be an array or object")
 }
 
 // parseJSON parses a JSON string field
