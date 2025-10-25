@@ -1,6 +1,8 @@
 package services
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -38,6 +40,20 @@ type SignupWithAccountRequest struct {
 	Username string `json:"username" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
+}
+
+type RequestPasswordResetRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"newPassword" binding:"required,min=6"`
+}
+
+type PasswordResetResponse struct {
+	Message string `json:"message"`
+	Token   string `json:"token,omitempty"` // Only for development/testing
 }
 
 type UserResponse struct {
@@ -276,4 +292,91 @@ func (s *AuthService) ValidateToken(tokenString string) (userID, accountID strin
 	}
 
 	return "", "", fmt.Errorf("invalid token")
+}
+
+// RequestPasswordReset generates a password reset token and saves it to the database
+func (s *AuthService) RequestPasswordReset(email string) (*PasswordResetResponse, error) {
+	// Find user by email
+	var user models.User
+	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+		// Return success even if user not found (security best practice)
+		return &PasswordResetResponse{
+			Message: "If an account with that email exists, a password reset link has been sent",
+		}, nil
+	}
+
+	// Generate secure random token (32 bytes = 64 hex characters)
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate reset token: %w", err)
+	}
+	resetToken := hex.EncodeToString(tokenBytes)
+
+	// Hash the token before storing (same as password hashing)
+	hashedToken, err := bcrypt.GenerateFromPassword([]byte(resetToken), 10)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash reset token: %w", err)
+	}
+
+	// Set expiration to 1 hour from now
+	expiresAt := time.Now().Add(1 * time.Hour)
+	tokenHashStr := string(hashedToken)
+
+	// Save hashed token and expiration to user
+	if err := s.db.Model(&user).Updates(map[string]interface{}{
+		"reset_token_hash": tokenHashStr,
+		"reset_token_exp":  expiresAt,
+	}).Error; err != nil {
+		return nil, fmt.Errorf("failed to save reset token: %w", err)
+	}
+
+	// TODO: Send email with reset token
+	// In production, you would send an email here with a link like:
+	// https://yourapp.com/reset-password?token={resetToken}
+	// For now, we'll return the token in the response for testing
+
+	return &PasswordResetResponse{
+		Message: "If an account with that email exists, a password reset link has been sent",
+		Token:   resetToken, // Remove this in production
+	}, nil
+}
+
+// ResetPassword resets a user's password using a valid reset token
+func (s *AuthService) ResetPassword(resetToken, newPassword string) error {
+	// Find all users with non-expired reset tokens
+	now := time.Now()
+	var users []models.User
+	if err := s.db.Where("reset_token_hash IS NOT NULL AND reset_token_exp > ?", now).Find(&users).Error; err != nil {
+		return fmt.Errorf("invalid or expired reset token")
+	}
+
+	// Try to match the token with each user's hashed token
+	var matchedUser *models.User
+	for i := range users {
+		if err := bcrypt.CompareHashAndPassword([]byte(*users[i].ResetTokenHash), []byte(resetToken)); err == nil {
+			matchedUser = &users[i]
+			break
+		}
+	}
+
+	if matchedUser == nil {
+		return fmt.Errorf("invalid or expired reset token")
+	}
+
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 10)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password and clear reset token fields
+	if err := s.db.Model(matchedUser).Updates(map[string]interface{}{
+		"password":         string(hashedPassword),
+		"reset_token_hash": nil,
+		"reset_token_exp":  nil,
+	}).Error; err != nil {
+		return fmt.Errorf("failed to reset password: %w", err)
+	}
+
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/patali/yantra/internal/models"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -17,6 +18,11 @@ func NewUserService(db *gorm.DB) *UserService {
 
 type UpdateThemeRequest struct {
 	Theme string `json:"theme" binding:"required"`
+}
+
+type UpdatePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required,min=6"`
 }
 
 // GetUserById retrieves a user by ID
@@ -190,6 +196,33 @@ func (s *UserService) DeleteUserInSameAccounts(id, currentUserID string) error {
 
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("user not found")
+	}
+
+	return nil
+}
+
+// UpdatePassword updates a user's password after verifying the current password
+func (s *UserService) UpdatePassword(userID, currentPassword, newPassword string) error {
+	// Fetch user
+	var user models.User
+	if err := s.db.First(&user, "id = ?", userID).Error; err != nil {
+		return fmt.Errorf("user not found: %w", err)
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 10)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password
+	if err := s.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
 	}
 
 	return nil

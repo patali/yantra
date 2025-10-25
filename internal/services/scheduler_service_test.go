@@ -2,25 +2,50 @@ package services
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/patali/yantra/internal/models"
 	"github.com/stretchr/testify/assert"
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func setupSchedulerTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("Failed to connect to database: %v", err)
+	// Use test database from environment or default
+	testDBURL := os.Getenv("TEST_DATABASE_URL")
+	if testDBURL == "" {
+		testDBURL = "postgres://postgres:postgres@localhost:5432/yantra_test?sslmode=disable"
 	}
+
+	db, err := gorm.Open(postgres.Open(testDBURL), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("Failed to connect to test database: %v\nMake sure PostgreSQL is running and TEST_DATABASE_URL is set", err)
+	}
+
+	// Clean up test data before running tests
+	db.Exec("DROP SCHEMA public CASCADE")
+	db.Exec("CREATE SCHEMA public")
 
 	err = db.AutoMigrate(&models.Workflow{})
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
+
+	// Set PostgreSQL UUID defaults
+	db.Exec("ALTER TABLE workflows ALTER COLUMN id SET DEFAULT gen_random_uuid()")
+
+	// Clean up after test
+	t.Cleanup(func() {
+		sqlDB, _ := db.DB()
+		if sqlDB != nil {
+			sqlDB.Close()
+		}
+	})
 
 	return db
 }

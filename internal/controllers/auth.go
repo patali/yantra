@@ -24,10 +24,12 @@ func NewAuthController(authService *services.AuthService) *AuthController {
 func (ctrl *AuthController) RegisterRoutes(rg *gin.RouterGroup) {
 	auth := rg.Group("/auth")
 	{
-		auth.POST("/signup", ctrl.SignupWithAccount)   // Node.js compatible endpoint
-		auth.POST("/register", ctrl.SignupWithAccount) // Alternative endpoint
+		auth.POST("/signup", ctrl.SignupWithAccount)                         // Node.js compatible endpoint
+		auth.POST("/register", ctrl.SignupWithAccount)                       // Alternative endpoint
 		auth.POST("/login", ctrl.Login)
 		auth.GET("/me", middleware.AuthMiddleware(ctrl.authService), ctrl.GetMe)
+		auth.POST("/request-password-reset", ctrl.RequestPasswordReset)     // Request password reset
+		auth.POST("/reset-password", ctrl.ResetPassword)                     // Reset password with token
 	}
 }
 
@@ -103,4 +105,39 @@ func (ctrl *AuthController) ValidateToken(c *gin.Context) {
 		"userId":    userID,
 		"accountId": accountID,
 	})
+}
+
+// RequestPasswordReset generates and sends a password reset token
+// POST /api/auth/request-password-reset
+func (ctrl *AuthController) RequestPasswordReset(c *gin.Context) {
+	var req services.RequestPasswordResetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	response, err := ctrl.authService.RequestPasswordReset(req.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password reset request"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ResetPassword resets a user's password using a valid reset token
+// POST /api/auth/reset-password
+func (ctrl *AuthController) ResetPassword(c *gin.Context) {
+	var req services.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ctrl.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }

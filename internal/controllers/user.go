@@ -26,11 +26,12 @@ func (ctrl *UserController) RegisterRoutes(rg *gin.RouterGroup, authService *ser
 	users.Use(middleware.AuthMiddleware(authService))
 	{
 		users.GET("/", ctrl.GetAllUsers)
-		users.GET("/me", ctrl.GetCurrentUser) // Frontend compatible endpoint
-		users.POST("", ctrl.CreateUser)       // Frontend endpoint for creating users
+		users.GET("/me", ctrl.GetCurrentUser)           // Frontend compatible endpoint
+		users.POST("", ctrl.CreateUser)                 // Frontend endpoint for creating users
 		users.GET("/:id", ctrl.GetUserById)
 		users.POST("/theme", ctrl.UpdateThemeFromToken) // Frontend compatible endpoint
 		users.PATCH("/:id/theme", ctrl.UpdateTheme)     // Alternative endpoint
+		users.POST("/password", ctrl.UpdatePassword)    // Update password endpoint
 		users.DELETE("/:id", ctrl.DeleteUser)
 		users.POST("/invite", ctrl.InviteUser)
 	}
@@ -190,4 +191,27 @@ func (ctrl *UserController) InviteUser(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, user)
+}
+
+// UpdatePassword updates the current user's password
+// POST /api/users/password
+func (ctrl *UserController) UpdatePassword(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req services.UpdatePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ctrl.userService.UpdatePassword(userID, req.CurrentPassword, req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password updated successfully"})
 }

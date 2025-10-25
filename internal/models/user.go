@@ -8,14 +8,16 @@ import (
 )
 
 type User struct {
-	ID        string    `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Username  string    `gorm:"uniqueIndex;not null" json:"username"`
-	Email     string    `gorm:"uniqueIndex;not null" json:"email"`
-	Password  string    `gorm:"not null" json:"-"` // Don't include in JSON
-	Theme     string    `gorm:"default:light" json:"theme"`
-	CreatedBy *string   `gorm:"type:uuid" json:"createdBy,omitempty"`
-	CreatedAt time.Time `gorm:"autoCreateTime" json:"createdAt"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
+	ID             string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Username       string     `gorm:"uniqueIndex;not null" json:"username"`
+	Email          string     `gorm:"uniqueIndex;not null" json:"email"`
+	Password       string     `gorm:"not null" json:"-"` // Don't include in JSON
+	Theme          string     `gorm:"default:light" json:"theme"`
+	ResetTokenHash *string    `gorm:"index" json:"-"` // Hashed password reset token
+	ResetTokenExp  *time.Time `gorm:"index" json:"-"` // Reset token expiration
+	CreatedBy      *string    `gorm:"type:uuid" json:"createdBy,omitempty"`
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updatedAt"`
 }
 
 func (User) TableName() string {
