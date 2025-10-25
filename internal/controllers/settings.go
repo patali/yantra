@@ -236,17 +236,66 @@ func (ctrl *SettingsController) GetEmailProviderByName(c *gin.Context) {
 // TestEmailProvider tests an email provider configuration
 // POST /api/settings/email-providers/test
 func (ctrl *SettingsController) TestEmailProvider(c *gin.Context) {
+	accountID, _ := middleware.GetAccountID(c)
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	// Get the current user's email
+	var user models.User
+	if err := ctrl.db.Where("id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user information"})
+		return
+	}
+
 	var req EmailProviderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// TODO: Implement actual email test
-	// For now, just return success
+	// Create a temporary config from the request
+	config := &models.EmailProviderSettings{
+		Provider:        req.Provider,
+		APIKey:          ptrString(req.APIKey),
+		Domain:          ptrString(req.Domain),
+		FromEmail:       ptrString(req.FromEmail),
+		FromName:        ptrString(req.FromName),
+		Region:          ptrString(req.Region),
+		AccessKeyID:     ptrString(req.AccessKeyID),
+		SecretAccessKey: ptrString(req.SecretAccessKey),
+		SMTPHost:        ptrString(req.SMTPHost),
+		SMTPPort:        ptrInt(req.SMTPPort),
+		SMTPUser:        ptrString(req.SMTPUser),
+		SMTPPassword:    ptrString(req.SMTPPassword),
+		SMTPSecure:      req.SMTPSecure,
+	}
+
+	// Initialize email service and test the provider
+	emailService := services.NewEmailService(ctrl.db)
+	result, err := emailService.TestProviderToEmail(c.Request.Context(), accountID, services.EmailProvider(req.Provider), config, user.Email)
+
+	if err != nil || !result.Success {
+		errorMsg := "Failed to send test email"
+		if result != nil && result.Error != "" {
+			errorMsg = result.Error
+		} else if err != nil {
+			errorMsg = err.Error()
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"error":   errorMsg,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "Email provider configuration is valid (test not fully implemented)",
+		"success":   true,
+		"message":   "Test email sent successfully! Check your inbox at " + user.Email,
+		"messageId": result.MessageID,
 	})
 }
 
