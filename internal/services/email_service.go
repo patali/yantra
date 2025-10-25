@@ -377,13 +377,21 @@ func (s *EmailService) sendViaSMTP(ctx context.Context, options executors.EmailO
 	}, nil
 }
 
-// TestProvider tests an email provider configuration
+// TestProvider tests an email provider configuration (sends to fromEmail)
 func (s *EmailService) TestProvider(ctx context.Context, accountID string, provider EmailProvider, config *models.EmailProviderSettings) (*executors.EmailResult, error) {
+	if config.FromEmail == nil || *config.FromEmail == "" {
+		return &executors.EmailResult{Success: false, Error: "from email is required"}, fmt.Errorf("from email is required")
+	}
+	return s.TestProviderToEmail(ctx, accountID, provider, config, *config.FromEmail)
+}
+
+// TestProviderToEmail tests an email provider configuration by sending to a specific email
+func (s *EmailService) TestProviderToEmail(ctx context.Context, accountID string, provider EmailProvider, config *models.EmailProviderSettings, toEmail string) (*executors.EmailResult, error) {
 	testEmail := executors.EmailOptions{
-		To:      []string{*config.FromEmail},
+		To:      []string{toEmail},
 		Subject: "Test Email - Yantra",
-		Text:    "This is a test email from your Yantra workflow system.",
-		HTML:    "<h1>Test Email</h1><p>This is a test email from your Yantra workflow system.</p>",
+		Text:    "This is a test email from your Yantra workflow system. If you received this, your email configuration is working correctly!",
+		HTML:    "<h1>Test Email</h1><p>This is a test email from your Yantra workflow system.</p><p>If you received this, your email configuration is working correctly!</p>",
 	}
 
 	switch provider {
