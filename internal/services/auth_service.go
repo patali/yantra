@@ -58,6 +58,11 @@ type PasswordResetResponse struct {
 	Token   string `json:"token,omitempty"` // Only for development/testing
 }
 
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword" binding:"required"`
+	NewPassword     string `json:"newPassword" binding:"required,min=6"`
+}
+
 type UserResponse struct {
 	ID        string    `json:"id"`
 	Username  string    `json:"username"`
@@ -394,6 +399,33 @@ func (s *AuthService) ResetPassword(resetToken, newPassword string) error {
 		"reset_token_exp":  nil,
 	}).Error; err != nil {
 		return fmt.Errorf("failed to reset password: %w", err)
+	}
+
+	return nil
+}
+
+// ChangePassword changes a user's password (requires current password verification)
+func (s *AuthService) ChangePassword(userID, currentPassword, newPassword string) error {
+	// Find the user
+	var user models.User
+	if err := s.db.First(&user, "id = ?", userID).Error; err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 10)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password
+	if err := s.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
 	}
 
 	return nil

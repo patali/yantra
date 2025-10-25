@@ -30,6 +30,7 @@ func (ctrl *AuthController) RegisterRoutes(rg *gin.RouterGroup) {
 		auth.GET("/me", middleware.AuthMiddleware(ctrl.authService), ctrl.GetMe)
 		auth.POST("/request-password-reset", ctrl.RequestPasswordReset)     // Request password reset
 		auth.POST("/reset-password", ctrl.ResetPassword)                     // Reset password with token
+		auth.POST("/change-password", middleware.AuthMiddleware(ctrl.authService), ctrl.ChangePassword) // Change password (authenticated)
 	}
 }
 
@@ -140,4 +141,27 @@ func (ctrl *AuthController) ResetPassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+}
+
+// ChangePassword changes a user's password (requires authentication and current password)
+// POST /api/auth/change-password
+func (ctrl *AuthController) ChangePassword(c *gin.Context) {
+	userID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req services.ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ctrl.authService.ChangePassword(userID, req.CurrentPassword, req.NewPassword); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
