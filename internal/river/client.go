@@ -25,9 +25,6 @@ func NewClient(ctx context.Context, databaseURL string, engine WorkflowEngine) (
 		return nil, fmt.Errorf("failed to create pgx pool: %w", err)
 	}
 
-	// Note: River tables should be created by running setup_river.sql
-	// or using River's CLI migration tools before starting the client
-
 	// Create River workers
 	workers := river.NewWorkers()
 

@@ -15,9 +15,6 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
-# Install River CLI for migrations
-RUN go install github.com/riverqueue/river/cmd/river@latest
-
 # Copy source code
 COPY . .
 
@@ -41,9 +38,6 @@ WORKDIR /home/yantra
 
 # Copy binary from builder
 COPY --from=builder /app/yantra-server .
-
-# Copy River CLI from builder
-COPY --from=builder /go/bin/river /usr/local/bin/river
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /home/yantra/docker-entrypoint.sh

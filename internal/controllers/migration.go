@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 
 	"github.com/gin-gonic/gin"
+	"github.com/patali/yantra/internal/db"
 	"gorm.io/gorm"
 )
 
@@ -63,7 +63,7 @@ func migrationAPIKeyMiddleware() gin.HandlerFunc {
 	}
 }
 
-// RunMigrations runs both River and GORM migrations
+// RunMigrations runs both River and GORM migrations programmatically
 func (ctrl *MigrationController) RunMigrations(c *gin.Context) {
 	ctx := context.Background()
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -77,28 +77,23 @@ func (ctrl *MigrationController) RunMigrations(c *gin.Context) {
 
 	results := make(map[string]any)
 
-	// Run River migrations
-	riverCmd := exec.CommandContext(ctx, "river", "migrate-up", "--database-url", databaseURL)
-	riverOutput, riverErr := riverCmd.CombinedOutput()
+	// Get database instance
+	database := &db.Database{DB: ctrl.db}
 
+	// Run River migrations programmatically
+	riverErr := database.RunRiverMigrations(ctx, databaseURL)
 	results["river"] = map[string]any{
-		"output": string(riverOutput),
-		"error":  nil,
+		"error": nil,
 	}
-
 	if riverErr != nil {
 		results["river"].(map[string]any)["error"] = riverErr.Error()
 	}
 
 	// Run GORM migrations
-	gormErr := ctrl.db.AutoMigrate(
-		// Add all your models here - this should match what's in internal/db/db.go
-	)
-
+	gormErr := database.AutoMigrate()
 	results["gorm"] = map[string]any{
 		"error": nil,
 	}
-
 	if gormErr != nil {
 		results["gorm"].(map[string]any)["error"] = gormErr.Error()
 	}

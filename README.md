@@ -2,53 +2,31 @@
 
 ## Database Migrations
 
-### Quick Start (Recommended)
+Migrations are integrated directly into the application and run automatically on startup. Both River (job queue) and GORM (application models) migrations are handled programmatically.
 
-Run all migrations automatically:
+## Migration Methods
 
-```bash
-./migrate.sh
-```
+### Method 1: Automatic on Startup (Default)
 
-This script will:
-1. Install River CLI if needed
-2. Run River migrations
-3. Build the GORM migration binary
-4. Run GORM migrations
-
-### Manual Migration Steps
-
-If you prefer to run migrations manually:
-
-#### 1. Run River migrations
+Migrations run automatically when you start the server:
 
 ```bash
-go install github.com/riverqueue/river/cmd/river@latest
-river migrate-up --database-url "$DATABASE_URL"
+go run cmd/server/main.go
 ```
 
-#### 2. Run GORM migrations
+On startup, the application will:
+1. Run River migrations (creates job queue tables)
+2. Run GORM migrations (creates application tables)
+3. Start the server
 
-```bash
-# Make sure DATABASE_URL is set in .env
-go run cmd/migrate/main.go
-```
+**Benefits:**
+- ✅ Zero configuration needed
+- ✅ Always up-to-date database schema
+- ✅ Works in all environments (dev, staging, production)
 
-## Docker Setup
+### Method 2: Migration API Endpoint
 
-### Build and run with Docker Compose
-
-```bash
-docker-compose up --build
-```
-
-### Running Migrations
-
-You have **two options** for running migrations:
-
-#### Option 1: Migration API Endpoint (Recommended)
-
-After deploying your application, trigger migrations via the API:
+For production deployments where you want explicit control over migrations:
 
 1. **Generate a secure API key:**
 ```bash
@@ -60,14 +38,14 @@ openssl rand -hex 32
 MIGRATION_API_KEY=your-generated-key
 ```
 
-3. **Deploy your application and use the migration endpoints:**
+3. **Use the migration endpoints:**
 
 ```bash
 # Check migration status
 curl -H "X-Migration-Key: your-secret-key" \
   http://localhost:3000/api/migration/status
 
-# Run migrations
+# Run migrations manually
 curl -X POST -H "X-Migration-Key: your-secret-key" \
   http://localhost:3000/api/migration/run
 ```
@@ -78,18 +56,19 @@ curl -X POST -H "X-Migration-Key: your-secret-key" \
 - Safe to call multiple times (migrations are idempotent)
 
 **Benefits:**
-- ✅ Simple to use with any deployment platform
-- ✅ No performance impact on server startup
-- ✅ Manual control over when migrations run
-- ✅ Perfect for Coolify deployments
+- ✅ Explicit control over when migrations run
+- ✅ Useful for CI/CD pipelines
+- ✅ Can run migrations before deploying new code
 
-#### Option 2: Local Script
+## Docker Setup
 
-For local development:
+### Build and run with Docker Compose
 
 ```bash
-./migrate.sh
+docker-compose up --build
 ```
+
+Migrations will run automatically on container startup.
 
 ### Environment Variables
 

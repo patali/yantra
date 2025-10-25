@@ -35,9 +35,14 @@ func main() {
 	}
 	defer database.Close()
 
-	// Run migrations
+	// Run River migrations first
+	if err := database.RunRiverMigrations(ctx, cfg.DatabaseURL); err != nil {
+		log.Fatalf("❌ Failed to run River migrations: %v", err)
+	}
+
+	// Run GORM migrations
 	if err := database.AutoMigrate(); err != nil {
-		log.Fatalf("❌ Failed to run migrations: %v", err)
+		log.Fatalf("❌ Failed to run GORM migrations: %v", err)
 	}
 
 	// Initialize workflow engine
