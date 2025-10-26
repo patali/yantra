@@ -8,6 +8,7 @@ import (
 	"net/smtp"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -32,10 +33,60 @@ const (
 
 type EmailService struct {
 	db *gorm.DB
+
+	// Client caches for performance (thread-safe)
+	resendClients  sync.Map // map[apiKey]*resend.Client
+	mailgunClients sync.Map // map[domain:apiKey]mailgun.Mailgun
+	sesClients     sync.Map // map[region:accessKey]*ses.Client
 }
 
 func NewEmailService(db *gorm.DB) *EmailService {
 	return &EmailService{db: db}
+}
+
+// getResendClient returns a cached Resend client or creates a new one
+func (s *EmailService) getResendClient(apiKey string) *resend.Client {
+	if client, ok := s.resendClients.Load(apiKey); ok {
+		return client.(*resend.Client)
+	}
+
+	client := resend.NewClient(apiKey)
+	s.resendClients.Store(apiKey, client)
+	return client
+}
+
+// getMailgunClient returns a cached Mailgun client or creates a new one
+func (s *EmailService) getMailgunClient(domain, apiKey string) mailgun.Mailgun {
+	key := domain + ":" + apiKey
+	if client, ok := s.mailgunClients.Load(key); ok {
+		return client.(mailgun.Mailgun)
+	}
+
+	client := mailgun.NewMailgun(domain, apiKey)
+	s.mailgunClients.Store(key, client)
+	return client
+}
+
+// getSESClient returns a cached SES client or creates a new one
+func (s *EmailService) getSESClient(ctx context.Context, region, accessKey, secretKey string) (*ses.Client, error) {
+	key := region + ":" + accessKey
+	if client, ok := s.sesClients.Load(key); ok {
+		return client.(*ses.Client), nil
+	}
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(region),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			accessKey, secretKey, "",
+		)),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	client := ses.NewFromConfig(cfg)
+	s.sesClients.Store(key, client)
+	return client, nil
 }
 
 // GetActiveProvider retrieves the active email provider configuration for an account
@@ -112,8 +163,8 @@ func (s *EmailService) sendViaResend(_ctx context.Context, options executors.Ema
 		return &executors.EmailResult{Success: false, Error: "Resend API key not configured"}, fmt.Errorf("API key missing")
 	}
 
-	// Create Resend client
-	client := resend.NewClient(*config.APIKey)
+	// Get cached Resend client
+	client := s.getResendClient(*config.APIKey)
 
 	// Build "from" address
 	from := s.buildFromAddress(config)
@@ -178,7 +229,7 @@ func (s *EmailService) sendViaMailgun(ctx context.Context, options executors.Ema
 		return &executors.EmailResult{Success: false, Error: "Mailgun API key and domain required"}, fmt.Errorf("missing configuration")
 	}
 
-	mg := mailgun.NewMailgun(*config.Domain, *config.APIKey)
+	mg := s.getMailgunClient(*config.Domain, *config.APIKey)
 
 	from := s.buildFromAddress(config)
 
@@ -230,20 +281,11 @@ func (s *EmailService) sendViaSES(ctx context.Context, options executors.EmailOp
 		return &executors.EmailResult{Success: false, Error: "AWS SES requires accessKeyId, secretAccessKey, and region"}, fmt.Errorf("missing configuration")
 	}
 
-	// Create AWS config
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion(*providerConfig.Region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			*providerConfig.AccessKeyID,
-			*providerConfig.SecretAccessKey,
-			"",
-		)),
-	)
+	// Get cached SES client
+	client, err := s.getSESClient(ctx, *providerConfig.Region, *providerConfig.AccessKeyID, *providerConfig.SecretAccessKey)
 	if err != nil {
 		return &executors.EmailResult{Success: false, Error: err.Error()}, err
 	}
-
-	client := ses.NewFromConfig(cfg)
 
 	from := s.buildFromAddress(providerConfig)
 

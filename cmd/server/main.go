@@ -20,7 +20,9 @@ import (
 )
 
 func main() {
-	ctx := context.Background()
+	// Create cancellable context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Load configuration
 	cfg, err := config.Load()
@@ -173,16 +175,31 @@ func main() {
 
 	log.Println("🛑 Shutting down server...")
 
+	// Cancel main context to stop all goroutines
+	cancel()
+
 	// Graceful shutdown with 10 second timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	// Stop scheduler service
+	log.Println("📅 Stopping scheduler...")
+	if err := schedulerService.Stop(shutdownCtx); err != nil {
+		log.Printf("⚠️  Error stopping scheduler: %v", err)
+	}
+
+	// Stop outbox worker
+	log.Println("📦 Stopping outbox worker...")
+	outboxWorker.Stop()
 
 	// Stop River workers
+	log.Println("🌊 Stopping River workers...")
 	if err := riverClient.Stop(shutdownCtx); err != nil {
 		log.Printf("⚠️  Error stopping River client: %v", err)
 	}
 
 	// Stop HTTP server
+	log.Println("🌐 Stopping HTTP server...")
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("❌ Server forced to shutdown: %v", err)
 	}
