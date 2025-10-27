@@ -18,6 +18,7 @@ func NewExecutorFactory(db *gorm.DB) *ExecutorFactory {
 	}
 
 	// Register executors
+	factory.Register("json-array", NewJsonArrayTriggerExecutor())
 	factory.Register("conditional", NewConditionalExecutor())
 	factory.Register("transform", NewTransformExecutor())
 	factory.Register("delay", NewDelayExecutor())
@@ -26,6 +27,7 @@ func NewExecutorFactory(db *gorm.DB) *ExecutorFactory {
 	factory.Register("slack", NewSlackExecutor())
 	factory.Register("loop", NewLoopExecutor())
 	factory.Register("json_to_csv", NewJSONToCSVExecutor())
+	factory.Register("json", NewJSONExecutor()) // JSON data node
 
 	return factory
 }
