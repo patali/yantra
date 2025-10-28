@@ -32,17 +32,18 @@ func (we *WorkflowExecution) BeforeCreate(tx *gorm.DB) error {
 }
 
 type WorkflowNodeExecution struct {
-	ID             string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	ExecutionID    string     `gorm:"type:uuid;not null" json:"executionId"`
-	NodeID         string     `gorm:"not null" json:"nodeId"`
-	NodeType       string     `gorm:"not null" json:"nodeType"`
-	Status         string     `gorm:"not null" json:"status"`            // pending, processing, running, success, error
-	Input          *string    `gorm:"type:text" json:"input,omitempty"`  // JSON string
-	Output         *string    `gorm:"type:text" json:"output,omitempty"` // JSON string
-	Error          *string    `gorm:"type:text" json:"error,omitempty"`
-	IdempotencyKey *string    `gorm:"uniqueIndex" json:"idempotencyKey,omitempty"`
-	StartedAt      time.Time  `gorm:"autoCreateTime" json:"startedAt"`
-	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	ID               string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ExecutionID      string     `gorm:"type:uuid;not null" json:"executionId"`
+	NodeID           string     `gorm:"not null" json:"nodeId"`
+	NodeType         string     `gorm:"not null" json:"nodeType"`
+	Status           string     `gorm:"not null" json:"status"`            // pending, processing, running, success, error
+	Input            *string    `gorm:"type:text" json:"input,omitempty"`  // JSON string
+	Output           *string    `gorm:"type:text" json:"output,omitempty"` // JSON string
+	Error            *string    `gorm:"type:text" json:"error,omitempty"`
+	ParentLoopNodeID *string    `gorm:"type:text" json:"parentLoopNodeId,omitempty"` // Node ID of parent loop (if this execution is part of a loop body)
+	IdempotencyKey   *string    `gorm:"uniqueIndex" json:"idempotencyKey,omitempty"`
+	StartedAt        time.Time  `gorm:"autoCreateTime" json:"startedAt"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
 }
 
 func (WorkflowNodeExecution) TableName() string {

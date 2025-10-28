@@ -80,16 +80,17 @@ type WorkflowResponse struct {
 }
 
 type NodeExecutionResponse struct {
-	ID          string     `json:"id"`
-	ExecutionID string     `json:"executionId"`
-	NodeID      string     `json:"nodeId"`
-	NodeType    string     `json:"nodeType"`
-	Status      string     `json:"status"`
-	Input       *string    `json:"input,omitempty"`
-	Output      *string    `json:"output,omitempty"`
-	Error       *string    `json:"error,omitempty"`
-	StartedAt   *time.Time `json:"startedAt,omitempty"`
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	ID               string     `json:"id"`
+	ExecutionID      string     `json:"executionId"`
+	NodeID           string     `json:"nodeId"`
+	NodeType         string     `json:"nodeType"`
+	Status           string     `json:"status"`
+	Input            *string    `json:"input,omitempty"`
+	Output           *string    `json:"output,omitempty"`
+	Error            *string    `json:"error,omitempty"`
+	ParentLoopNodeID *string    `json:"parentLoopNodeId,omitempty"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
 }
 
 type ExecutionResponse struct {
@@ -553,16 +554,17 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*Executi
 	nodeExecResponses := make([]NodeExecutionResponse, len(nodeExecutions))
 	for i, ne := range nodeExecutions {
 		nodeExecResponses[i] = NodeExecutionResponse{
-			ID:          ne.ID,
-			ExecutionID: ne.ExecutionID,
-			NodeID:      ne.NodeID,
-			NodeType:    ne.NodeType,
-			Status:      ne.Status,
-			Input:       ne.Input,
-			Output:      ne.Output,
-			Error:       ne.Error,
-			StartedAt:   &ne.StartedAt,
-			CompletedAt: ne.CompletedAt,
+			ID:               ne.ID,
+			ExecutionID:      ne.ExecutionID,
+			NodeID:           ne.NodeID,
+			NodeType:         ne.NodeType,
+			Status:           ne.Status,
+			Input:            ne.Input,
+			Output:           ne.Output,
+			Error:            ne.Error,
+			ParentLoopNodeID: ne.ParentLoopNodeID,
+			StartedAt:        &ne.StartedAt,
+			CompletedAt:      ne.CompletedAt,
 		}
 	}
 

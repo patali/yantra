@@ -26,6 +26,7 @@ func NewExecutorFactory(db *gorm.DB) *ExecutorFactory {
 	factory.Register("http", NewHTTPExecutor())
 	factory.Register("slack", NewSlackExecutor())
 	factory.Register("loop", NewLoopExecutor())
+	factory.Register("loop-accumulator", NewLoopAccumulatorExecutor())
 	factory.Register("json_to_csv", NewJSONToCSVExecutor())
 	factory.Register("json", NewJSONExecutor()) // JSON data node
 

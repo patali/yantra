@@ -72,6 +72,22 @@ func (s *OutboxService) ExecuteNodeWithOutbox(
 		}
 		payloadJSON, _ := json.Marshal(payload)
 
+		// Get max retries from node config (default: 3)
+		maxRetries := 3
+		if mr, ok := nodeConfig["maxRetries"].(float64); ok {
+			maxRetries = int(mr)
+		}
+		// Ensure maxRetries is at least 0 and at most 10
+		if maxRetries < 0 {
+			maxRetries = 0
+		}
+		if maxRetries > 10 {
+			maxRetries = 10
+		}
+		// MaxAttempts = maxRetries + 1 (initial attempt + retries)
+		maxAttempts := maxRetries + 1
+		log.Printf("  🔄 Node %s outbox message configured with %d max attempts (maxRetries=%d)", nodeID, maxAttempts, maxRetries)
+
 		// Create outbox message
 		now := time.Now()
 		outboxMessage = models.OutboxMessage{
@@ -81,7 +97,7 @@ func (s *OutboxService) ExecuteNodeWithOutbox(
 			Status:          "pending",
 			IdempotencyKey:  idempotencyKey,
 			Attempts:        0,
-			MaxAttempts:     3,
+			MaxAttempts:     maxAttempts,
 			NextRetryAt:     &now, // Process immediately
 		}
 
