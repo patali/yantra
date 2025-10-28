@@ -131,9 +131,15 @@ func (e *TransformExecutor) mapFields(config map[string]interface{}, data interf
 
 	// Handle array format
 	if mappingsArray, ok := mappings.([]interface{}); ok {
-		// Start with original data
-		for k, v := range dataMap {
-			result[k] = v
+		// Start with empty result - only include mapped fields
+		// (unless includeUnmapped is true)
+		includeUnmapped, _ := config["includeUnmapped"].(bool)
+
+		if includeUnmapped {
+			// Start with original data if includeUnmapped is true
+			for k, v := range dataMap {
+				result[k] = v
+			}
 		}
 
 		// Apply mappings
@@ -154,9 +160,11 @@ func (e *TransformExecutor) mapFields(config map[string]interface{}, data interf
 			if value, exists := dataMap[fromField]; exists {
 				result[toField] = value
 
-				// If removeSource is true, remove the original field
-				if removeSource, ok := mapping["removeSource"].(bool); ok && removeSource {
-					delete(result, fromField)
+				// If removeSource is true and we're including unmapped fields, remove the original field
+				if includeUnmapped {
+					if removeSource, ok := mapping["removeSource"].(bool); ok && removeSource && fromField != toField {
+						delete(result, fromField)
+					}
 				}
 			}
 		}
