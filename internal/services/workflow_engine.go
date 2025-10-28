@@ -717,12 +717,34 @@ func (s *WorkflowEngineService) executeSubgraph(
 
 		nodeType, _ := node["type"].(string)
 
-		// Skip start, end, and loop nodes in subgraph
-		if nodeType == "start" || nodeType == "end" || nodeType == "loop" {
+		// Skip start and end nodes in subgraph
+		if nodeType == "start" || nodeType == "end" {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)
 			}
+			continue
+		}
+
+		// Handle nested loops - actually execute them
+		if nodeType == "loop" {
+			data, _ := node["data"].(map[string]interface{})
+			config, _ := data["config"].(map[string]interface{})
+
+			log.Printf("    🔄 Executing nested loop node %s", nodeID)
+			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, executedGlobal, workflowData["nodeOutputs"].(map[string]interface{}))
+			if err != nil {
+				return fmt.Errorf("nested loop execution failed: %w", err)
+			}
+			// Loop handles its own children, don't add them to queue
+			continue
+		}
+
+		if nodeType == "loop-accumulator" {
+			log.Printf("    🔄 Executing nested loop accumulator node %s", nodeID)
+			// Need to get edges for loop accumulator
+			// For now, we'll skip nested loop accumulators as they need edge information
+			log.Printf("    ⚠️  Nested loop accumulators not yet fully supported, skipping")
 			continue
 		}
 
@@ -1096,17 +1118,44 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 
 		nodeType, _ := node["type"].(string)
 
-		// Skip start, end, and loop nodes in subgraph
-		if nodeType == "start" || nodeType == "end" || nodeType == "loop" || nodeType == "loop-accumulator" {
-			// Don't add children if this is the parent loop node (feedback edge)
-			if parentLoopNodeID != "" && nodeID == parentLoopNodeID {
-				log.Printf("    🔙 Reached parent loop node %s, stopping traversal", nodeID)
-				continue
-			}
+		// Skip start and end nodes in subgraph
+		if nodeType == "start" || nodeType == "end" {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)
 			}
+			continue
+		}
+
+		// Check if this is the parent loop node (feedback edge)
+		if (nodeType == "loop" || nodeType == "loop-accumulator") && parentLoopNodeID != "" && nodeID == parentLoopNodeID {
+			log.Printf("    🔙 Reached parent loop node %s, stopping traversal", nodeID)
+			continue
+		}
+
+		// Handle nested loops - actually execute them
+		if nodeType == "loop" {
+			data, _ := node["data"].(map[string]interface{})
+			config, _ := data["config"].(map[string]interface{})
+
+			log.Printf("    🔄 Executing nested loop node %s in loop body", nodeID)
+			// Create a local executed map for the nested loop
+			nestedExecuted := make(map[string]bool)
+			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, nestedExecuted, workflowData["nodeOutputs"].(map[string]interface{}))
+			if err != nil {
+				return nil, fmt.Errorf("nested loop execution failed: %w", err)
+			}
+			// Get the loop output and continue
+			if loopOutput, ok := workflowData["nodeOutputs"].(map[string]interface{})[nodeID]; ok {
+				currentOutput = loopOutput.(map[string]interface{})
+			}
+			// Loop handles its own children, don't add them to queue
+			continue
+		}
+
+		if nodeType == "loop-accumulator" {
+			log.Printf("    🔄 Executing nested loop accumulator node %s in loop body", nodeID)
+			log.Printf("    ⚠️  Nested loop accumulators not yet fully supported, skipping")
 			continue
 		}
 
