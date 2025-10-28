@@ -36,6 +36,7 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 		workflows.GET("/:id/executions", ctrl.GetWorkflowExecutions)                 // Frontend endpoint
 		workflows.GET("/:id/executions/:executionId", ctrl.GetWorkflowExecutionById) // Frontend endpoint
 		workflows.POST("/:id/versions/restore", ctrl.RestoreVersion)                 // Frontend endpoint
+		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                     // Frontend endpoint
 	}
 }
 
@@ -248,6 +249,22 @@ func (ctrl *WorkflowController) RestoreVersion(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Version restored successfully"})
+}
+
+// DuplicateWorkflow creates a copy of an existing workflow
+// POST /api/workflows/:id/duplicate
+func (ctrl *WorkflowController) DuplicateWorkflow(c *gin.Context) {
+	id := c.Param("id")
+	userID, _ := middleware.GetUserID(c)
+	accountID, _ := middleware.GetAccountID(c)
+
+	duplicatedWorkflow, err := ctrl.workflowService.DuplicateWorkflow(c.Request.Context(), id, userID, accountID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, duplicatedWorkflow)
 }
 
 // getRetryableNodes returns a list of node IDs that can be retried

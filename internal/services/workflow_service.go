@@ -264,6 +264,44 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req CreateWorkflow
 	return &workflow, nil
 }
 
+// DuplicateWorkflow creates a copy of an existing workflow
+func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, accountID string) (*models.Workflow, error) {
+	// Get the original workflow with its latest version
+	originalWorkflow, err := s.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("workflow not found: %w", err)
+	}
+
+	// Get the latest version definition
+	var latestVersion models.WorkflowVersion
+	if err := s.db.Where("workflow_id = ?", id).
+		Order("version DESC").
+		First(&latestVersion).Error; err != nil {
+		return nil, fmt.Errorf("failed to get workflow version: %w", err)
+	}
+
+	// Parse the definition
+	var definition map[string]interface{}
+	if err := json.Unmarshal([]byte(latestVersion.Definition), &definition); err != nil {
+		return nil, fmt.Errorf("failed to parse workflow definition: %w", err)
+	}
+
+	// Create a new workflow with "Copy" suffix
+	copyName := originalWorkflow.Name + " (Copy)"
+
+	// Create the duplicate workflow (inactive by default, no schedule)
+	createReq := CreateWorkflowRequest{
+		Name:        copyName,
+		Description: originalWorkflow.Description,
+		Definition:  definition,
+		IsActive:    boolPtr(false), // Start as inactive
+		Schedule:    nil,             // Don't copy schedule
+		Timezone:    &originalWorkflow.Timezone,
+	}
+
+	return s.CreateWorkflow(ctx, createReq, userID, accountID)
+}
+
 // UpdateWorkflow updates a workflow
 func (s *WorkflowService) UpdateWorkflow(id string, req UpdateWorkflowRequest) (*models.Workflow, error) {
 	var workflow models.Workflow
@@ -723,4 +761,8 @@ func (s *WorkflowService) RestoreWorkflowVersion(id string, version int) error {
 // Helper function
 func stringPtr(s string) *string {
 	return &s
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }
