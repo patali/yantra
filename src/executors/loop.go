@@ -64,19 +64,34 @@ func (e *LoopExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 
 	fmt.Printf("🔍 Loop found %d items\n", len(items))
 
-	// Get iteration config
+	// Get iteration config with abuse prevention limits
 	iterationCount := len(items)
-	maxIterations := 100 // Safety limit
+
+	// Global maximum to prevent system abuse (10,000 iterations)
+	const globalMaxIterations = 10000
+
+	// Default maximum if not configured
+	maxIterations := 1000
+
+	// Allow user to configure max_iterations, but cap it at global maximum
 	if max, ok := execCtx.NodeConfig["max_iterations"].(float64); ok {
-		maxIterations = int(max)
+		userMax := int(max)
+		if userMax > 0 && userMax <= globalMaxIterations {
+			maxIterations = userMax
+		} else if userMax > globalMaxIterations {
+			maxIterations = globalMaxIterations
+			fmt.Printf("⚠️  Configured max_iterations (%d) exceeds global limit, capping at %d\n", userMax, globalMaxIterations)
+		}
 	}
 
 	if iterationCount > maxIterations {
 		return &ExecutionResult{
 			Success: false,
-			Error:   fmt.Sprintf("iteration count %d exceeds maximum %d", iterationCount, maxIterations),
+			Error:   fmt.Sprintf("iteration count %d exceeds maximum %d (configure max_iterations to increase, global limit: %d)", iterationCount, maxIterations, globalMaxIterations),
 		}, nil
 	}
+
+	fmt.Printf("🔍 Loop will execute %d iterations (max allowed: %d)\n", iterationCount, maxIterations)
 
 	// Get variable names
 	itemVariable := "item"

@@ -12,10 +12,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// Abuse prevention limits
+const (
+	MaxExecutionDuration = 30 * time.Minute // Maximum workflow execution time
+	MaxTotalNodes        = 10000             // Maximum total nodes executed in a workflow
+	MaxLoopDepth         = 5                 // Maximum nested loop depth
+	MaxIterations        = 10000             // Global maximum iterations per loop
+	MaxAccumulatorSize   = 10 * 1024 * 1024  // 10MB max accumulated data size
+	MaxDataSize          = 10 * 1024 * 1024  // 10MB max input/output size
+)
+
 type WorkflowEngineService struct {
 	db              *gorm.DB
 	executorFactory *executors.ExecutorFactory
 	outboxService   *OutboxService
+}
+
+// executionLimits tracks execution limits to prevent abuse
+type executionLimits struct {
+	nodesExecuted int
+	currentDepth  int
+	startTime     time.Time
 }
 
 func NewWorkflowEngineService(db *gorm.DB) *WorkflowEngineService {
@@ -26,9 +43,51 @@ func NewWorkflowEngineService(db *gorm.DB) *WorkflowEngineService {
 	}
 }
 
+// checkDataSize validates that data size is within limits
+func checkDataSize(data interface{}, dataType string) error {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to serialize %s: %w", dataType, err)
+	}
+
+	size := len(jsonData)
+	if size > MaxDataSize {
+		return fmt.Errorf("%s size (%d bytes) exceeds maximum allowed (%d bytes)", dataType, size, MaxDataSize)
+	}
+
+	return nil
+}
+
+// checkExecutionLimits validates execution hasn't exceeded limits
+func (s *WorkflowEngineService) checkExecutionLimits(ctx context.Context, limits *executionLimits) error {
+	// Check for context cancellation or timeout
+	select {
+	case <-ctx.Done():
+		elapsed := time.Since(limits.startTime)
+		return fmt.Errorf("workflow execution timeout after %v (limit: %v)", elapsed, MaxExecutionDuration)
+	default:
+	}
+
+	// Check node count
+	if limits.nodesExecuted > MaxTotalNodes {
+		return fmt.Errorf("workflow exceeded maximum node executions (%d > %d)", limits.nodesExecuted, MaxTotalNodes)
+	}
+
+	// Check depth
+	if limits.currentDepth > MaxLoopDepth {
+		return fmt.Errorf("workflow exceeded maximum nesting depth (%d > %d)", limits.currentDepth, MaxLoopDepth)
+	}
+
+	return nil
+}
+
 // ExecuteWorkflow executes a workflow (called by River worker)
 func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID, executionID, inputJSON, triggerType string) error {
 	log.Printf("🔄 Starting workflow execution: %s (execution: %s)", workflowID, executionID)
+
+	// Create context with timeout for abuse prevention
+	execCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
+	defer cancel()
 
 	// Get workflow
 	var workflow models.Workflow
@@ -58,6 +117,11 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 		}
 	}
 
+	// Check input size
+	if err := checkDataSize(input, "input"); err != nil {
+		return fmt.Errorf("input data too large: %w", err)
+	}
+
 	// Get the existing execution record (created before queuing the job)
 	var execution models.WorkflowExecution
 	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
@@ -73,8 +137,15 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 		return fmt.Errorf("failed to parse workflow definition: %w", err)
 	}
 
-	// Execute workflow
-	err := s.executeWorkflowDefinition(ctx, execution.ID, workflow.AccountID, definition, input)
+	// Initialize execution limits tracker
+	limits := &executionLimits{
+		nodesExecuted: 0,
+		currentDepth:  0,
+		startTime:     time.Now(),
+	}
+
+	// Execute workflow with limits
+	err := s.executeWorkflowDefinition(execCtx, execution.ID, workflow.AccountID, definition, input, limits)
 
 	// Update execution status
 	now := time.Now()
@@ -113,7 +184,7 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 }
 
 // executeWorkflowDefinition executes the workflow definition with proper graph-based execution
-func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, executionID string, accountID *string, definition map[string]interface{}, input map[string]interface{}) error {
+func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, executionID string, accountID *string, definition map[string]interface{}, input map[string]interface{}, limits *executionLimits) error {
 	nodes, ok := definition["nodes"].([]interface{})
 	if !ok {
 		return fmt.Errorf("invalid workflow definition: missing nodes")
@@ -122,6 +193,11 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 	edges, ok := definition["edges"].([]interface{})
 	if !ok {
 		edges = []interface{}{} // Empty edges is okay
+	}
+
+	// Check execution limits before starting
+	if err := s.checkExecutionLimits(ctx, limits); err != nil {
+		return err
 	}
 
 	// Build node map and adjacency list
@@ -181,6 +257,11 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 	executed := make(map[string]bool)
 
 	for len(queue) > 0 {
+		// Check execution limits before each node
+		if err := s.checkExecutionLimits(ctx, limits); err != nil {
+			return err
+		}
+
 		currentNodeID := queue[0]
 		queue = queue[1:]
 
@@ -194,6 +275,8 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 
 		// Skip start and end nodes for execution
 		if nodeType != "start" && nodeType != "end" {
+			// Increment node execution counter
+			limits.nodesExecuted++
 			// Get node config
 			data, _ := currentNode["data"].(map[string]interface{})
 			config, _ := data["config"].(map[string]interface{})
@@ -219,16 +302,24 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 
 			// Check if this is a loop node
 			if nodeType == "loop" {
+				// Increment depth for nested loop tracking
+				limits.currentDepth++
+				defer func() { limits.currentDepth-- }()
+
 				// Execute loop and its child nodes iteratively
-				err := s.executeLoopWithChildren(ctx, executionID, accountID, currentNodeID, config, nodeInput, workflowData, nodeMap, adjacencyList, executed, nodeOutputs)
+				err := s.executeLoopWithChildren(ctx, executionID, accountID, currentNodeID, config, nodeInput, workflowData, nodeMap, adjacencyList, edges, executed, nodeOutputs, limits)
 				if err != nil {
 					return fmt.Errorf("loop execution failed (%s): %w", currentNodeID, err)
 				}
 				// Skip adding next nodes to queue here - they're already executed in the loop
 				continue
 			} else if nodeType == "loop-accumulator" {
+				// Increment depth for nested loop tracking
+				limits.currentDepth++
+				defer func() { limits.currentDepth-- }()
+
 				// Execute loop accumulator with feedback loop
-				err := s.executeLoopAccumulatorWithChildren(ctx, executionID, accountID, currentNodeID, config, nodeInput, workflowData, nodeMap, adjacencyList, edges, executed, nodeOutputs)
+				err := s.executeLoopAccumulatorWithChildren(ctx, executionID, accountID, currentNodeID, config, nodeInput, workflowData, nodeMap, adjacencyList, edges, executed, nodeOutputs, limits)
 				if err != nil {
 					return fmt.Errorf("loop accumulator execution failed (%s): %w", currentNodeID, err)
 				}
@@ -612,10 +703,17 @@ func (s *WorkflowEngineService) executeLoopWithChildren(
 	workflowData map[string]interface{},
 	nodeMap map[string]map[string]interface{},
 	adjacencyList map[string][]string,
+	edges []interface{},
 	executed map[string]bool,
 	nodeOutputs map[string]interface{},
+	limits *executionLimits,
 ) error {
 	log.Printf("  🔄 Executing loop node %s", loopNodeID)
+
+	// Check execution limits
+	if err := s.checkExecutionLimits(ctx, limits); err != nil {
+		return err
+	}
 
 	// First, execute the loop node itself to get the items array
 	loopOutput, err := s.executeNodeAndGetOutput(ctx, executionID, accountID, loopNodeID, "loop", loopConfig, loopInput, workflowData)
@@ -665,7 +763,7 @@ func (s *WorkflowEngineService) executeLoopWithChildren(
 		// Execute child nodes for this iteration
 		// We need to execute the subgraph starting from child nodes
 		for _, childNodeID := range childNodeIDs {
-			err := s.executeSubgraph(ctx, executionID, accountID, childNodeID, iterationInput, workflowData, nodeMap, adjacencyList, executed)
+			err := s.executeSubgraph(ctx, executionID, accountID, childNodeID, iterationInput, workflowData, nodeMap, adjacencyList, edges, executed, limits)
 			if err != nil {
 				log.Printf("  ❌ Loop iteration %d failed at node %s: %v", i, childNodeID, err)
 				// Continue with next iteration even if this one fails
@@ -700,13 +798,20 @@ func (s *WorkflowEngineService) executeSubgraph(
 	workflowData map[string]interface{},
 	nodeMap map[string]map[string]interface{},
 	adjacencyList map[string][]string,
+	edges []interface{},
 	executedGlobal map[string]bool,
+	limits *executionLimits,
 ) error {
 	// Track what we execute in this subgraph iteration
 	queue := []string{startNodeID}
 	currentOutput := input
 
 	for len(queue) > 0 {
+		// Check execution limits
+		if err := s.checkExecutionLimits(ctx, limits); err != nil {
+			return err
+		}
+
 		nodeID := queue[0]
 		queue = queue[1:]
 
@@ -726,13 +831,27 @@ func (s *WorkflowEngineService) executeSubgraph(
 			continue
 		}
 
-		// Handle nested loops - actually execute them
+		// Handle nested loops - track depth and execute
 		if nodeType == "loop" {
 			data, _ := node["data"].(map[string]interface{})
 			config, _ := data["config"].(map[string]interface{})
 
-			log.Printf("    🔄 Executing nested loop node %s", nodeID)
-			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, executedGlobal, workflowData["nodeOutputs"].(map[string]interface{}))
+			log.Printf("    🔄 Executing nested loop node %s (current depth: %d)", nodeID, limits.currentDepth)
+
+			// Increment depth for nested loop
+			limits.currentDepth++
+
+			// Check depth limit before executing
+			if err := s.checkExecutionLimits(ctx, limits); err != nil {
+				limits.currentDepth-- // Restore depth before returning error
+				return fmt.Errorf("nested loop depth limit exceeded at node %s: %w", nodeID, err)
+			}
+
+			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, edges, executedGlobal, workflowData["nodeOutputs"].(map[string]interface{}), limits)
+
+			// Decrement depth after execution
+			limits.currentDepth--
+
 			if err != nil {
 				return fmt.Errorf("nested loop execution failed: %w", err)
 			}
@@ -741,10 +860,30 @@ func (s *WorkflowEngineService) executeSubgraph(
 		}
 
 		if nodeType == "loop-accumulator" {
-			log.Printf("    🔄 Executing nested loop accumulator node %s", nodeID)
-			// Need to get edges for loop accumulator
-			// For now, we'll skip nested loop accumulators as they need edge information
-			log.Printf("    ⚠️  Nested loop accumulators not yet fully supported, skipping")
+			data, _ := node["data"].(map[string]interface{})
+			config, _ := data["config"].(map[string]interface{})
+
+			log.Printf("    🔄 Executing nested loop accumulator node %s (current depth: %d)", nodeID, limits.currentDepth)
+
+			// Increment depth for nested loop accumulator
+			limits.currentDepth++
+
+			// Check depth limit before executing
+			if err := s.checkExecutionLimits(ctx, limits); err != nil {
+				limits.currentDepth-- // Restore depth before returning error
+				return fmt.Errorf("nested loop accumulator depth limit exceeded at node %s: %w", nodeID, err)
+			}
+
+			// Execute loop accumulator with edges
+			err := s.executeLoopAccumulatorWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, edges, executedGlobal, workflowData["nodeOutputs"].(map[string]interface{}), limits)
+
+			// Decrement depth after execution
+			limits.currentDepth--
+
+			if err != nil {
+				return fmt.Errorf("nested loop accumulator execution failed: %w", err)
+			}
+			// Loop accumulator handles its own children, don't add them to queue
 			continue
 		}
 
@@ -834,8 +973,14 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 	edges []interface{},
 	executed map[string]bool,
 	nodeOutputs map[string]interface{},
+	limits *executionLimits,
 ) error {
 	log.Printf("  🔄 Executing loop accumulator node %s", loopNodeID)
+
+	// Check execution limits
+	if err := s.checkExecutionLimits(ctx, limits); err != nil {
+		return err
+	}
 
 	// Create node execution record at the START
 	nodeExecution := models.WorkflowNodeExecution{
@@ -1003,7 +1148,7 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 		var iterationOutput map[string]interface{}
 		iterationFailed := false
 		for _, bodyNodeID := range loopBodyNodeIDs {
-			output, err := s.executeSubgraphAndGetOutputWithParent(ctx, executionID, accountID, bodyNodeID, loopNodeID, iterationInput, workflowData, nodeMap, adjacencyList)
+			output, err := s.executeSubgraphAndGetOutputWithParent(ctx, executionID, accountID, bodyNodeID, loopNodeID, iterationInput, workflowData, nodeMap, adjacencyList, edges, limits)
 			if err != nil {
 				log.Printf("  ❌ Loop accumulator iteration %d failed at node %s: %v", i, bodyNodeID, err)
 				iterationFailed = true
@@ -1029,10 +1174,20 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 				// Add to array
 				if accArray, ok := accumulated.([]interface{}); ok {
 					accumulated = append(accArray, iterationOutput)
+
+					// Check accumulated data size to prevent memory abuse
+					if err := checkDataSize(accumulated, "accumulated data"); err != nil {
+						return fmt.Errorf("accumulator size limit exceeded at iteration %d: %w", i, err)
+					}
 				}
 			} else if accumulationMode == "last" {
 				// Replace with latest
 				accumulated = iterationOutput
+
+				// Check output size
+				if err := checkDataSize(accumulated, "accumulated data"); err != nil {
+					return fmt.Errorf("accumulator size limit exceeded at iteration %d: %w", i, err)
+				}
 			}
 		}
 
@@ -1089,8 +1244,10 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutput(
 	workflowData map[string]interface{},
 	nodeMap map[string]map[string]interface{},
 	adjacencyList map[string][]string,
+	edges []interface{},
+	limits *executionLimits,
 ) (map[string]interface{}, error) {
-	return s.executeSubgraphAndGetOutputWithParent(ctx, executionID, accountID, startNodeID, "", input, workflowData, nodeMap, adjacencyList)
+	return s.executeSubgraphAndGetOutputWithParent(ctx, executionID, accountID, startNodeID, "", input, workflowData, nodeMap, adjacencyList, edges, limits)
 }
 
 func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
@@ -1103,11 +1260,18 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 	workflowData map[string]interface{},
 	nodeMap map[string]map[string]interface{},
 	adjacencyList map[string][]string,
+	edges []interface{},
+	limits *executionLimits,
 ) (map[string]interface{}, error) {
 	queue := []string{startNodeID}
 	currentOutput := input
 
 	for len(queue) > 0 {
+		// Check execution limits
+		if err := s.checkExecutionLimits(ctx, limits); err != nil {
+			return nil, err
+		}
+
 		nodeID := queue[0]
 		queue = queue[1:]
 
@@ -1133,15 +1297,29 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 			continue
 		}
 
-		// Handle nested loops - actually execute them
+		// Handle nested loops in loop bodies - track depth and execute
 		if nodeType == "loop" {
 			data, _ := node["data"].(map[string]interface{})
 			config, _ := data["config"].(map[string]interface{})
 
-			log.Printf("    🔄 Executing nested loop node %s in loop body", nodeID)
+			log.Printf("    🔄 Executing nested loop node %s in loop body (current depth: %d)", nodeID, limits.currentDepth)
+
+			// Increment depth for nested loop
+			limits.currentDepth++
+
+			// Check depth limit before executing
+			if err := s.checkExecutionLimits(ctx, limits); err != nil {
+				limits.currentDepth-- // Restore depth before returning error
+				return nil, fmt.Errorf("nested loop depth limit exceeded at node %s: %w", nodeID, err)
+			}
+
 			// Create a local executed map for the nested loop
 			nestedExecuted := make(map[string]bool)
-			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, nestedExecuted, workflowData["nodeOutputs"].(map[string]interface{}))
+			err := s.executeLoopWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, edges, nestedExecuted, workflowData["nodeOutputs"].(map[string]interface{}), limits)
+
+			// Decrement depth after execution
+			limits.currentDepth--
+
 			if err != nil {
 				return nil, fmt.Errorf("nested loop execution failed: %w", err)
 			}
@@ -1154,8 +1332,35 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 		}
 
 		if nodeType == "loop-accumulator" {
-			log.Printf("    🔄 Executing nested loop accumulator node %s in loop body", nodeID)
-			log.Printf("    ⚠️  Nested loop accumulators not yet fully supported, skipping")
+			data, _ := node["data"].(map[string]interface{})
+			config, _ := data["config"].(map[string]interface{})
+
+			log.Printf("    🔄 Executing nested loop accumulator node %s in loop body (current depth: %d)", nodeID, limits.currentDepth)
+
+			// Increment depth for nested loop accumulator
+			limits.currentDepth++
+
+			// Check depth limit before executing
+			if err := s.checkExecutionLimits(ctx, limits); err != nil {
+				limits.currentDepth-- // Restore depth before returning error
+				return nil, fmt.Errorf("nested loop accumulator depth limit exceeded at node %s: %w", nodeID, err)
+			}
+
+			// Create a local executed map for the nested loop accumulator
+			nestedExecuted := make(map[string]bool)
+			err := s.executeLoopAccumulatorWithChildren(ctx, executionID, accountID, nodeID, config, currentOutput, workflowData, nodeMap, adjacencyList, edges, nestedExecuted, workflowData["nodeOutputs"].(map[string]interface{}), limits)
+
+			// Decrement depth after execution
+			limits.currentDepth--
+
+			if err != nil {
+				return nil, fmt.Errorf("nested loop accumulator execution failed: %w", err)
+			}
+			// Get the loop accumulator output and continue
+			if loopOutput, ok := workflowData["nodeOutputs"].(map[string]interface{})[nodeID]; ok {
+				currentOutput = loopOutput.(map[string]interface{})
+			}
+			// Loop accumulator handles its own children, don't add them to queue
 			continue
 		}
 
