@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/services"
 )
 
 // AuthMiddleware validates JWT tokens and sets user context

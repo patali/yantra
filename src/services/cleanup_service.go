@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"gorm.io/gorm"
 )
 

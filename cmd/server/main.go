@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/config"
-	"github.com/patali/yantra/internal/controllers"
-	"github.com/patali/yantra/internal/db"
-	"github.com/patali/yantra/internal/executors"
-	"github.com/patali/yantra/internal/middleware"
-	riverinternal "github.com/patali/yantra/internal/river"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/config"
+	"github.com/patali/yantra/src/controllers"
+	"github.com/patali/yantra/src/db"
+	"github.com/patali/yantra/src/executors"
+	"github.com/patali/yantra/src/middleware"
+	riverinternal "github.com/patali/yantra/src/river"
+	"github.com/patali/yantra/src/services"
 )
 
 func main() {

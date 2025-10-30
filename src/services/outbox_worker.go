@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/patali/yantra/internal/executors"
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/executors"
+	"github.com/patali/yantra/src/db/models"
 )
 
 type OutboxWorkerService struct {

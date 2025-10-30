@@ -4,9 +4,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/models"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/services"
 	"gorm.io/gorm"
 )
 
@@ -37,7 +38,7 @@ func (ctrl *AuthController) RegisterRoutes(rg *gin.RouterGroup) {
 // SignupWithAccount handles user registration with account creation
 // POST /api/auth/register
 func (ctrl *AuthController) SignupWithAccount(c *gin.Context) {
-	var req services.SignupWithAccountRequest
+	var req dto.SignupWithAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -55,7 +56,7 @@ func (ctrl *AuthController) SignupWithAccount(c *gin.Context) {
 // Login handles user authentication
 // POST /api/auth/login
 func (ctrl *AuthController) Login(c *gin.Context) {
-	var req services.LoginRequest
+	var req dto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -86,7 +87,7 @@ func (ctrl *AuthController) GetMe(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, services.UserResponse{
+	c.JSON(http.StatusOK, dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
@@ -111,7 +112,7 @@ func (ctrl *AuthController) ValidateToken(c *gin.Context) {
 // RequestPasswordReset generates and sends a password reset token
 // POST /api/auth/request-password-reset
 func (ctrl *AuthController) RequestPasswordReset(c *gin.Context) {
-	var req services.RequestPasswordResetRequest
+	var req dto.RequestPasswordResetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -129,7 +130,7 @@ func (ctrl *AuthController) RequestPasswordReset(c *gin.Context) {
 // ResetPassword resets a user's password using a valid reset token
 // POST /api/auth/reset-password
 func (ctrl *AuthController) ResetPassword(c *gin.Context) {
-	var req services.ResetPasswordRequest
+	var req dto.ResetPasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -152,7 +153,7 @@ func (ctrl *AuthController) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	var req services.ChangePasswordRequest
+	var req dto.ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

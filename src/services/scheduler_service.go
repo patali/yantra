@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )

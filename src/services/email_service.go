@@ -16,8 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 	"github.com/mailgun/mailgun-go/v4"
-	"github.com/patali/yantra/internal/executors"
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/executors"
+	"github.com/patali/yantra/src/db/models"
 	"github.com/resend/resend-go/v2"
 	"gorm.io/gorm"
 )

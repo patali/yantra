@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
@@ -56,7 +56,7 @@ func TestAuthService_CreateUser(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
 
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "password123",
@@ -75,7 +75,7 @@ func TestAuthService_CreateUser_DuplicateEmail(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
 
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "password123",
@@ -97,7 +97,7 @@ func TestAuthService_Login(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "password123",
@@ -106,7 +106,7 @@ func TestAuthService_Login(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Login
-	loginReq := LoginRequest{
+	loginReq := dto.LoginRequest{
 		Username: "testuser",
 		Password: "password123",
 	}
@@ -123,7 +123,7 @@ func TestAuthService_Login_InvalidPassword(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "password123",
@@ -132,7 +132,7 @@ func TestAuthService_Login_InvalidPassword(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Login with wrong password
-	loginReq := LoginRequest{
+	loginReq := dto.LoginRequest{
 		Username: "testuser",
 		Password: "wrongpassword",
 	}
@@ -146,7 +146,7 @@ func TestAuthService_SignupWithAccount(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
 
-	req := SignupWithAccountRequest{
+	req := dto.SignupWithAccountRequest{
 		Name:     "Test Account",
 		Username: "testuser",
 		Email:    "test@example.com",
@@ -169,7 +169,7 @@ func TestUserService_UpdatePassword(t *testing.T) {
 	userService := NewUserService(db)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "oldpassword123",
@@ -182,7 +182,7 @@ func TestUserService_UpdatePassword(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify new password works
-	loginReq := LoginRequest{
+	loginReq := dto.LoginRequest{
 		Username: "testuser",
 		Password: "newpassword123",
 	}
@@ -198,7 +198,7 @@ func TestUserService_UpdatePassword_WrongCurrentPassword(t *testing.T) {
 	userService := NewUserService(db)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "oldpassword123",
@@ -217,7 +217,7 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "password123",
@@ -254,7 +254,7 @@ func TestAuthService_ResetPassword(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "oldpassword123",
@@ -287,7 +287,7 @@ func TestAuthService_ResetPassword(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify new password works
-	loginReq := LoginRequest{
+	loginReq := dto.LoginRequest{
 		Username: "testuser",
 		Password: "newpassword456",
 	}
@@ -308,7 +308,7 @@ func TestAuthService_ResetPassword_InvalidToken(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "oldpassword123",
@@ -331,7 +331,7 @@ func TestAuthService_ResetPassword_ExpiredToken(t *testing.T) {
 	authService := NewAuthService(db, "test-secret", nil)
 
 	// Create user
-	req := CreateUserRequest{
+	req := dto.CreateUserRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 		Password: "oldpassword123",

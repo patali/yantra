@@ -2,11 +2,12 @@ package services
 
 import (
 	"context"
+	"github.com/patali/yantra/src/dto"
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"gorm.io/gorm"
 )
 
@@ -28,88 +29,9 @@ func (s *WorkflowService) SetScheduler(scheduler *SchedulerService) {
 	s.schedulerService = scheduler
 }
 
-type CreateWorkflowRequest struct {
-	Name        string                 `json:"name" binding:"required"`
-	Description *string                `json:"description"`
-	Definition  map[string]interface{} `json:"definition" binding:"required"`
-	Schedule    *string                `json:"schedule"`
-	Timezone    *string                `json:"timezone"`
-	IsActive    *bool                  `json:"is_active"`
-}
-
-type UpdateWorkflowRequest struct {
-	Name        *string                `json:"name"`
-	Description *string                `json:"description"`
-	Definition  map[string]interface{} `json:"definition"`
-	ChangeLog   *string                `json:"change_log"`
-}
-
-type UpdateScheduleRequest struct {
-	Schedule *string `json:"schedule"` // Can be null to clear, omitted to keep existing
-	Timezone *string `json:"timezone"`
-	IsActive *bool   `json:"isActive"` // Use camelCase to match frontend
-}
-
-type ExecuteWorkflowRequest struct {
-	Input map[string]interface{} `json:"input"`
-}
-
-type WorkflowCreator struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-}
-
-type WorkflowCount struct {
-	Executions int `json:"executions"`
-	Versions   int `json:"versions"`
-}
-
-type WorkflowResponse struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`
-	Description    *string          `json:"description,omitempty"`
-	IsActive       bool             `json:"isActive"`
-	Schedule       *string          `json:"schedule,omitempty"`
-	Timezone       string           `json:"timezone"`
-	CurrentVersion int              `json:"currentVersion"`
-	CreatedBy      string           `json:"createdBy"` // Creator user ID
-	Creator        *WorkflowCreator `json:"creator"`   // Creator details
-	Count          *WorkflowCount   `json:"_count"`    // Counts
-	CreatedAt      time.Time        `json:"createdAt"`
-	UpdatedAt      time.Time        `json:"updatedAt"`
-}
-
-type NodeExecutionResponse struct {
-	ID               string     `json:"id"`
-	ExecutionID      string     `json:"executionId"`
-	NodeID           string     `json:"nodeId"`
-	NodeType         string     `json:"nodeType"`
-	Status           string     `json:"status"`
-	Input            *string    `json:"input,omitempty"`
-	Output           *string    `json:"output,omitempty"`
-	Error            *string    `json:"error,omitempty"`
-	ParentLoopNodeID *string    `json:"parentLoopNodeId,omitempty"`
-	StartedAt        *time.Time `json:"startedAt,omitempty"`
-	CompletedAt      *time.Time `json:"completedAt,omitempty"`
-}
-
-type ExecutionResponse struct {
-	ID             string                  `json:"id"`
-	WorkflowID     string                  `json:"workflowId"`
-	Workflow       *WorkflowResponse       `json:"workflow,omitempty"`
-	Version        int                     `json:"version"`
-	Status         string                  `json:"status"`
-	TriggerType    string                  `json:"triggerType"`
-	Input          *string                 `json:"input,omitempty"`
-	Output         *string                 `json:"output,omitempty"`
-	Error          *string                 `json:"error,omitempty"`
-	StartedAt      *time.Time              `json:"startedAt,omitempty"`
-	CompletedAt    *time.Time              `json:"completedAt,omitempty"`
-	NodeExecutions []NodeExecutionResponse `json:"nodeExecutions"`
-}
 
 // GetAllWorkflows retrieves all workflows for an account
-func (s *WorkflowService) GetAllWorkflows(accountID string) ([]WorkflowResponse, error) {
+func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowResponse, error) {
 	var workflows []models.Workflow
 	err := s.db.Where("account_id = ?", accountID).
 		Order("created_at DESC").
@@ -119,13 +41,13 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]WorkflowResponse,
 		return nil, fmt.Errorf("failed to fetch workflows: %w", err)
 	}
 
-	responses := make([]WorkflowResponse, len(workflows))
+	responses := make([]dto.WorkflowResponse, len(workflows))
 	for i, w := range workflows {
 		// Get creator details
 		var creator models.User
-		var creatorDetails *WorkflowCreator
+		var creatorDetails *dto.WorkflowCreator
 		if err := s.db.Select("username", "email").First(&creator, "id = ?", w.CreatedBy).Error; err == nil {
-			creatorDetails = &WorkflowCreator{
+			creatorDetails = &dto.WorkflowCreator{
 				Username: creator.Username,
 				Email:    creator.Email,
 			}
@@ -139,7 +61,7 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]WorkflowResponse,
 		var versionCount int64
 		s.db.Model(&models.WorkflowVersion{}).Where("workflow_id = ?", w.ID).Count(&versionCount)
 
-		responses[i] = WorkflowResponse{
+		responses[i] = dto.WorkflowResponse{
 			ID:             w.ID,
 			Name:           w.Name,
 			Description:    w.Description,
@@ -149,7 +71,7 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]WorkflowResponse,
 			CurrentVersion: w.CurrentVersion,
 			CreatedBy:      w.CreatedBy,
 			Creator:        creatorDetails,
-			Count: &WorkflowCount{
+			Count: &dto.WorkflowCount{
 				Executions: int(executionCount),
 				Versions:   int(versionCount),
 			},
@@ -197,7 +119,7 @@ func (s *WorkflowService) GetWorkflowByIdAndAccount(id, accountID string) (*mode
 }
 
 // CreateWorkflow creates a new workflow with optional scheduling
-func (s *WorkflowService) CreateWorkflow(ctx context.Context, req CreateWorkflowRequest, createdBy, accountID string) (*models.Workflow, error) {
+func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWorkflowRequest, createdBy, accountID string) (*models.Workflow, error) {
 	timezone := "UTC"
 	if req.Timezone != nil {
 		timezone = *req.Timezone
@@ -290,7 +212,7 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 	copyName := originalWorkflow.Name + " (Copy)"
 
 	// Create the duplicate workflow (inactive by default, no schedule)
-	createReq := CreateWorkflowRequest{
+	createReq := dto.CreateWorkflowRequest{
 		Name:        copyName,
 		Description: originalWorkflow.Description,
 		Definition:  definition,
@@ -303,7 +225,7 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 }
 
 // UpdateWorkflow updates a workflow
-func (s *WorkflowService) UpdateWorkflow(id string, req UpdateWorkflowRequest) (*models.Workflow, error) {
+func (s *WorkflowService) UpdateWorkflow(id string, req dto.UpdateWorkflowRequest) (*models.Workflow, error) {
 	var workflow models.Workflow
 	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
 		return nil, fmt.Errorf("workflow not found: %w", err)
@@ -329,7 +251,7 @@ func (s *WorkflowService) UpdateWorkflow(id string, req UpdateWorkflowRequest) (
 }
 
 // UpdateWorkflowByAccount updates a workflow by ID and account ID
-func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req UpdateWorkflowRequest) (*models.Workflow, error) {
+func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.UpdateWorkflowRequest) (*models.Workflow, error) {
 	var workflow models.Workflow
 	if err := s.db.Where("id = ? AND account_id = ?", id, accountID).First(&workflow).Error; err != nil {
 		return nil, fmt.Errorf("workflow not found: %w", err)
@@ -386,7 +308,7 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req Upda
 }
 
 // UpdateSchedule updates the workflow schedule
-func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req UpdateScheduleRequest) error {
+func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto.UpdateScheduleRequest) error {
 	var workflow models.Workflow
 	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
 		return fmt.Errorf("workflow not found: %w", err)
@@ -574,7 +496,7 @@ func (s *WorkflowService) GetWorkflowExecutions(id string) ([]models.WorkflowExe
 }
 
 // GetWorkflowExecutionById returns a specific execution with node executions
-func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*ExecutionResponse, error) {
+func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*dto.ExecutionResponse, error) {
 	var execution models.WorkflowExecution
 	err := s.db.Where("id = ?", executionId).First(&execution).Error
 	if err != nil {
@@ -589,9 +511,9 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*Executi
 		Find(&nodeExecutions)
 
 	// Convert node executions to response format
-	nodeExecResponses := make([]NodeExecutionResponse, len(nodeExecutions))
+	nodeExecResponses := make([]dto.NodeExecutionResponse, len(nodeExecutions))
 	for i, ne := range nodeExecutions {
-		nodeExecResponses[i] = NodeExecutionResponse{
+		nodeExecResponses[i] = dto.NodeExecutionResponse{
 			ID:               ne.ID,
 			ExecutionID:      ne.ExecutionID,
 			NodeID:           ne.NodeID,
@@ -607,7 +529,7 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*Executi
 	}
 
 	// Build response
-	response := &ExecutionResponse{
+	response := &dto.ExecutionResponse{
 		ID:             execution.ID,
 		WorkflowID:     execution.WorkflowID,
 		Version:        execution.Version,
@@ -625,7 +547,7 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*Executi
 }
 
 // GetAllWorkflowExecutions returns all workflow executions with optional filtering
-func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]ExecutionResponse, error) {
+func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]dto.ExecutionResponse, error) {
 	var executions []models.WorkflowExecution
 	query := s.db.Order("started_at DESC").Limit(limit)
 
@@ -643,7 +565,7 @@ func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]
 }
 
 // GetFailedWorkflowExecutions returns all failed and partially failed workflow executions
-func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]ExecutionResponse, error) {
+func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]dto.ExecutionResponse, error) {
 	var executions []models.WorkflowExecution
 	err := s.db.Where("status IN ?", []string{"error", "partially_failed"}).
 		Order("started_at DESC").
@@ -658,8 +580,8 @@ func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]ExecutionRes
 }
 
 // convertExecutionsToResponses converts execution models to response DTOs
-func (s *WorkflowService) convertExecutionsToResponses(executions []models.WorkflowExecution) []ExecutionResponse {
-	responses := make([]ExecutionResponse, len(executions))
+func (s *WorkflowService) convertExecutionsToResponses(executions []models.WorkflowExecution) []dto.ExecutionResponse {
+	responses := make([]dto.ExecutionResponse, len(executions))
 	for i, exec := range executions {
 		// Get node executions
 		var nodeExecutions []models.WorkflowNodeExecution
@@ -668,9 +590,9 @@ func (s *WorkflowService) convertExecutionsToResponses(executions []models.Workf
 			Find(&nodeExecutions)
 
 		// Convert node executions
-		nodeExecResponses := make([]NodeExecutionResponse, len(nodeExecutions))
+		nodeExecResponses := make([]dto.NodeExecutionResponse, len(nodeExecutions))
 		for j, ne := range nodeExecutions {
-			nodeExecResponses[j] = NodeExecutionResponse{
+			nodeExecResponses[j] = dto.NodeExecutionResponse{
 				ID:          ne.ID,
 				ExecutionID: ne.ExecutionID,
 				NodeID:      ne.NodeID,
@@ -686,15 +608,15 @@ func (s *WorkflowService) convertExecutionsToResponses(executions []models.Workf
 
 		// Get workflow details
 		var workflow models.Workflow
-		var workflowResp *WorkflowResponse
+		var workflowResp *dto.WorkflowResponse
 		if err := s.db.First(&workflow, "id = ?", exec.WorkflowID).Error; err == nil {
-			workflowResp = &WorkflowResponse{
+			workflowResp = &dto.WorkflowResponse{
 				ID:   workflow.ID,
 				Name: workflow.Name,
 			}
 		}
 
-		responses[i] = ExecutionResponse{
+		responses[i] = dto.ExecutionResponse{
 			ID:             exec.ID,
 			WorkflowID:     exec.WorkflowID,
 			Workflow:       workflowResp,

@@ -6,7 +6,7 @@ import (
 	"net/smtp"
 	"strings"
 
-	"github.com/patali/yantra/internal/config"
+	"github.com/patali/yantra/src/config"
 	"github.com/resend/resend-go/v2"
 )
 

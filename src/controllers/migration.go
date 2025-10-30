@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/db"
+	"github.com/patali/yantra/src/db"
 	"gorm.io/gorm"
 )
 

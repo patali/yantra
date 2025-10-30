@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/models"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/services"
 	"gorm.io/gorm"
 )
 

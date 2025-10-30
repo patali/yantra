@@ -1,9 +1,10 @@
 package services
 
 import (
+	"github.com/patali/yantra/src/dto"
 	"fmt"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"gorm.io/gorm"
 )
 
@@ -15,31 +16,9 @@ func NewAccountService(db *gorm.DB) *AccountService {
 	return &AccountService{db: db}
 }
 
-type CreateAccountRequest struct {
-	Name string `json:"name" binding:"required"`
-}
-
-type AddMemberRequest struct {
-	UserID string `json:"user_id" binding:"required"`
-	Role   string `json:"role"`
-}
-
-type AccountResponse struct {
-	ID        string           `json:"id"`
-	Name      string           `json:"name"`
-	Members   []MemberResponse `json:"members,omitempty"`
-	CreatedAt string           `json:"createdAt"`
-}
-
-type MemberResponse struct {
-	UserID   string       `json:"userId"`
-	Role     string       `json:"role"`
-	User     UserResponse `json:"user,omitempty"`
-	JoinedAt string       `json:"joinedAt"`
-}
 
 // CreateAccount creates a new account with the user as owner
-func (s *AccountService) CreateAccount(name, ownerUserID string) (*AccountResponse, error) {
+func (s *AccountService) CreateAccount(name, ownerUserID string) (*dto.AccountResponse, error) {
 	var account models.Account
 	var member models.AccountMember
 
@@ -134,7 +113,7 @@ func (s *AccountService) RemoveMember(accountID, userID string) error {
 }
 
 // ListMyAccounts lists all accounts the user is a member of
-func (s *AccountService) ListMyAccounts(userID string) ([]AccountResponse, error) {
+func (s *AccountService) ListMyAccounts(userID string) ([]dto.AccountResponse, error) {
 	var accounts []models.Account
 
 	err := s.db.Joins("JOIN account_members ON account_members.account_id = accounts.id").
@@ -147,7 +126,7 @@ func (s *AccountService) ListMyAccounts(userID string) ([]AccountResponse, error
 		return nil, fmt.Errorf("failed to fetch accounts: %w", err)
 	}
 
-	responses := make([]AccountResponse, len(accounts))
+	responses := make([]dto.AccountResponse, len(accounts))
 	for i, account := range accounts {
 		responses[i] = *s.toAccountResponse(&account)
 	}
@@ -156,7 +135,7 @@ func (s *AccountService) ListMyAccounts(userID string) ([]AccountResponse, error
 }
 
 // GetAccountByID retrieves an account by ID with all members
-func (s *AccountService) GetAccountByID(accountID string) (*AccountResponse, error) {
+func (s *AccountService) GetAccountByID(accountID string) (*dto.AccountResponse, error) {
 	var account models.Account
 
 	err := s.db.Preload("Members").Preload("Members.User").First(&account, "id = ?", accountID).Error
@@ -182,8 +161,8 @@ func (s *AccountService) UpdateAccount(accountID, name string) error {
 }
 
 // Helper to convert model to response
-func (s *AccountService) toAccountResponse(account *models.Account) *AccountResponse {
-	response := &AccountResponse{
+func (s *AccountService) toAccountResponse(account *models.Account) *dto.AccountResponse {
+	response := &dto.AccountResponse{
 		ID:        account.ID,
 		Name:      account.Name,
 		CreatedAt: account.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -192,9 +171,9 @@ func (s *AccountService) toAccountResponse(account *models.Account) *AccountResp
 	// Fetch members separately
 	var accountMembers []models.AccountMember
 	if err := s.db.Where("account_id = ?", account.ID).Find(&accountMembers).Error; err == nil && len(accountMembers) > 0 {
-		members := make([]MemberResponse, len(accountMembers))
+		members := make([]dto.MemberResponse, len(accountMembers))
 		for i, member := range accountMembers {
-			members[i] = MemberResponse{
+			members[i] = dto.MemberResponse{
 				UserID:   member.UserID,
 				Role:     member.Role,
 				JoinedAt: member.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -202,7 +181,7 @@ func (s *AccountService) toAccountResponse(account *models.Account) *AccountResp
 			// Fetch user details separately
 			var user models.User
 			if err := s.db.Where("id = ?", member.UserID).First(&user).Error; err == nil {
-				members[i].User = UserResponse{
+				members[i].User = dto.UserResponse{
 					ID:        user.ID,
 					Username:  user.Username,
 					Email:     user.Email,

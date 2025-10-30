@@ -1,9 +1,10 @@
 package services
 
 import (
+	"github.com/patali/yantra/src/dto"
 	"fmt"
 
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -16,23 +17,15 @@ func NewUserService(db *gorm.DB) *UserService {
 	return &UserService{db: db}
 }
 
-type UpdateThemeRequest struct {
-	Theme string `json:"theme" binding:"required"`
-}
-
-type UpdatePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword" binding:"required"`
-	NewPassword     string `json:"newPassword" binding:"required,min=6"`
-}
 
 // GetUserById retrieves a user by ID
-func (s *UserService) GetUserById(id string) (*UserResponse, error) {
+func (s *UserService) GetUserById(id string) (*dto.UserResponse, error) {
 	var user models.User
 	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
 		return nil, fmt.Errorf("user not found: %w", err)
 	}
 
-	return &UserResponse{
+	return &dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
@@ -42,7 +35,7 @@ func (s *UserService) GetUserById(id string) (*UserResponse, error) {
 }
 
 // GetUserByIdInSameAccounts retrieves a user by ID only if they share an account with the current user
-func (s *UserService) GetUserByIdInSameAccounts(id, currentUserID string) (*UserResponse, error) {
+func (s *UserService) GetUserByIdInSameAccounts(id, currentUserID string) (*dto.UserResponse, error) {
 	// Find accounts the current user belongs to
 	var currentUserMemberships []models.AccountMember
 	if err := s.db.Where("user_id = ?", currentUserID).Find(&currentUserMemberships).Error; err != nil {
@@ -70,7 +63,7 @@ func (s *UserService) GetUserByIdInSameAccounts(id, currentUserID string) (*User
 }
 
 // GetAllUsersForUser retrieves all users who share at least one account with the given user
-func (s *UserService) GetAllUsersForUser(userID string) ([]UserResponse, error) {
+func (s *UserService) GetAllUsersForUser(userID string) ([]dto.UserResponse, error) {
 	// Find accounts the user belongs to
 	var memberships []models.AccountMember
 	if err := s.db.Where("user_id = ?", userID).Find(&memberships).Error; err != nil {
@@ -78,7 +71,7 @@ func (s *UserService) GetAllUsersForUser(userID string) ([]UserResponse, error) 
 	}
 
 	if len(memberships) == 0 {
-		return []UserResponse{}, nil
+		return []dto.UserResponse{}, nil
 	}
 
 	// Extract account IDs
@@ -99,9 +92,9 @@ func (s *UserService) GetAllUsersForUser(userID string) ([]UserResponse, error) 
 		return nil, fmt.Errorf("failed to fetch users: %w", err)
 	}
 
-	responses := make([]UserResponse, len(users))
+	responses := make([]dto.UserResponse, len(users))
 	for i, user := range users {
-		responses[i] = UserResponse{
+		responses[i] = dto.UserResponse{
 			ID:        user.ID,
 			Username:  user.Username,
 			Email:     user.Email,
@@ -114,7 +107,7 @@ func (s *UserService) GetAllUsersForUser(userID string) ([]UserResponse, error) 
 }
 
 // UpdateTheme updates a user's theme preference
-func (s *UserService) UpdateTheme(id, theme string) (*UserResponse, error) {
+func (s *UserService) UpdateTheme(id, theme string) (*dto.UserResponse, error) {
 	if theme != "light" && theme != "dark" {
 		return nil, fmt.Errorf("invalid theme: must be 'light' or 'dark'")
 	}
@@ -131,7 +124,7 @@ func (s *UserService) UpdateTheme(id, theme string) (*UserResponse, error) {
 	// Reload user
 	s.db.First(&user, "id = ?", id)
 
-	return &UserResponse{
+	return &dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,

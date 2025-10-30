@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	riverinternal "github.com/patali/yantra/internal/river"
+	riverinternal "github.com/patali/yantra/src/river"
 	"github.com/riverqueue/river"
 )
 

@@ -4,8 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/services"
 )
 
 type UserController struct {
@@ -78,7 +79,7 @@ func (ctrl *UserController) GetCurrentUser(c *gin.Context) {
 func (ctrl *UserController) CreateUser(c *gin.Context) {
 	currentUserID, _ := middleware.GetUserID(c)
 
-	var req services.CreateUserRequest
+	var req dto.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -117,7 +118,7 @@ func (ctrl *UserController) UpdateThemeFromToken(c *gin.Context) {
 		return
 	}
 
-	var req services.UpdateThemeRequest
+	var req dto.UpdateThemeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -144,7 +145,7 @@ func (ctrl *UserController) UpdateTheme(c *gin.Context) {
 		return
 	}
 
-	var req services.UpdateThemeRequest
+	var req dto.UpdateThemeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -178,7 +179,7 @@ func (ctrl *UserController) DeleteUser(c *gin.Context) {
 func (ctrl *UserController) InviteUser(c *gin.Context) {
 	currentUserID, _ := middleware.GetUserID(c)
 
-	var req services.CreateUserRequest
+	var req dto.CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -202,7 +203,7 @@ func (ctrl *UserController) UpdatePassword(c *gin.Context) {
 		return
 	}
 
-	var req services.UpdatePasswordRequest
+	var req dto.UpdatePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

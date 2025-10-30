@@ -4,8 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/services"
 )
 
 type AccountController struct {
@@ -55,7 +56,7 @@ func (ctrl *AccountController) ListMyAccounts(c *gin.Context) {
 func (ctrl *AccountController) CreateAccount(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 
-	var req services.CreateAccountRequest
+	var req dto.CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -89,7 +90,7 @@ func (ctrl *AccountController) GetAccountByID(c *gin.Context) {
 func (ctrl *AccountController) UpdateAccount(c *gin.Context) {
 	id := c.Param("id")
 
-	var req services.CreateAccountRequest
+	var req dto.CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -108,7 +109,7 @@ func (ctrl *AccountController) UpdateAccount(c *gin.Context) {
 func (ctrl *AccountController) AddMember(c *gin.Context) {
 	accountID := c.Param("id")
 
-	var req services.AddMemberRequest
+	var req dto.AddMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

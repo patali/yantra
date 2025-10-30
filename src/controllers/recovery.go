@@ -5,8 +5,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/services"
 )
 
 type RecoveryController struct {
@@ -181,7 +182,7 @@ func (ctrl *RecoveryController) ReExecuteNode(c *gin.Context) {
 	}
 
 	// Find the specific node execution
-	var nodeExecution *services.NodeExecutionResponse
+	var nodeExecution *dto.NodeExecutionResponse
 	for _, nodeExec := range execution.NodeExecutions {
 		if nodeExec.NodeID == nodeId {
 			nodeExecution = &nodeExec

@@ -4,8 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/internal/middleware"
-	"github.com/patali/yantra/internal/services"
+	"github.com/patali/yantra/src/middleware"
+	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/services"
 )
 
 type WorkflowController struct {
@@ -79,7 +80,7 @@ func (ctrl *WorkflowController) CreateWorkflow(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	accountID, _ := middleware.GetAccountID(c)
 
-	var req services.CreateWorkflowRequest
+	var req dto.CreateWorkflowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -100,7 +101,7 @@ func (ctrl *WorkflowController) UpdateWorkflow(c *gin.Context) {
 	id := c.Param("id")
 	accountID, _ := middleware.GetAccountID(c)
 
-	var req services.UpdateWorkflowRequest
+	var req dto.UpdateWorkflowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -134,7 +135,7 @@ func (ctrl *WorkflowController) DeleteWorkflow(c *gin.Context) {
 func (ctrl *WorkflowController) ExecuteWorkflow(c *gin.Context) {
 	id := c.Param("id")
 
-	var req services.ExecuteWorkflowRequest
+	var req dto.ExecuteWorkflowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -158,7 +159,7 @@ func (ctrl *WorkflowController) ExecuteWorkflow(c *gin.Context) {
 func (ctrl *WorkflowController) UpdateSchedule(c *gin.Context) {
 	id := c.Param("id")
 
-	var req services.UpdateScheduleRequest
+	var req dto.UpdateScheduleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -268,7 +269,7 @@ func (ctrl *WorkflowController) DuplicateWorkflow(c *gin.Context) {
 }
 
 // getRetryableNodes returns a list of node IDs that can be retried
-func getRetryableNodes(nodeExecutions []services.NodeExecutionResponse) []string {
+func getRetryableNodes(nodeExecutions []dto.NodeExecutionResponse) []string {
 	var retryableNodes []string
 
 	for _, nodeExec := range nodeExecutions {

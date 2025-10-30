@@ -2,12 +2,13 @@ package services
 
 import (
 	"crypto/rand"
+	"github.com/patali/yantra/src/dto"
 	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/patali/yantra/internal/models"
+	"github.com/patali/yantra/src/db/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -26,59 +27,9 @@ func NewAuthService(db *gorm.DB, jwtSecret string, systemEmailSvc *SystemEmailSe
 	}
 }
 
-type CreateUserRequest struct {
-	Username string `json:"username" binding:"required"`
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-}
-
-type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
-
-type SignupWithAccountRequest struct {
-	Name     string `json:"name" binding:"required"`
-	Username string `json:"username" binding:"required"`
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-}
-
-type RequestPasswordResetRequest struct {
-	Email string `json:"email" binding:"required,email"`
-}
-
-type ResetPasswordRequest struct {
-	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"newPassword" binding:"required,min=6"`
-}
-
-type PasswordResetResponse struct {
-	Message string `json:"message"`
-	Token   string `json:"token,omitempty"` // Only for development/testing
-}
-
-type ChangePasswordRequest struct {
-	CurrentPassword string `json:"currentPassword" binding:"required"`
-	NewPassword     string `json:"newPassword" binding:"required,min=6"`
-}
-
-type UserResponse struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Theme     string    `json:"theme"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
-type LoginResponse struct {
-	Token   string           `json:"token"`
-	User    UserResponse     `json:"user"`
-	Account *AccountResponse `json:"account,omitempty"`
-}
 
 // CreateUser creates a new user (for invitations)
-func (s *AuthService) CreateUser(req CreateUserRequest, createdBy *string) (*UserResponse, error) {
+func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (*dto.UserResponse, error) {
 	// Check if user already exists
 	var existingUser models.User
 	result := s.db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser)
@@ -134,7 +85,7 @@ func (s *AuthService) CreateUser(req CreateUserRequest, createdBy *string) (*Use
 		}
 	}
 
-	return &UserResponse{
+	return &dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
@@ -144,7 +95,7 @@ func (s *AuthService) CreateUser(req CreateUserRequest, createdBy *string) (*Use
 }
 
 // Login authenticates a user and returns a JWT token
-func (s *AuthService) Login(req LoginRequest) (*LoginResponse, error) {
+func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, error) {
 	// Find user
 	var user models.User
 	if err := s.db.Where("username = ?", req.Username).First(&user).Error; err != nil {
@@ -169,9 +120,9 @@ func (s *AuthService) Login(req LoginRequest) (*LoginResponse, error) {
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 
-	return &LoginResponse{
+	return &dto.LoginResponse{
 		Token: token,
-		User: UserResponse{
+		User: dto.UserResponse{
 			ID:        user.ID,
 			Username:  user.Username,
 			Email:     user.Email,
@@ -182,7 +133,7 @@ func (s *AuthService) Login(req LoginRequest) (*LoginResponse, error) {
 }
 
 // SignupWithAccount creates a new user and account (for first-time signup)
-func (s *AuthService) SignupWithAccount(req SignupWithAccountRequest) (*LoginResponse, error) {
+func (s *AuthService) SignupWithAccount(req dto.SignupWithAccountRequest) (*dto.LoginResponse, error) {
 	// Check if user already exists
 	var existingUser models.User
 	result := s.db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser)
@@ -245,16 +196,16 @@ func (s *AuthService) SignupWithAccount(req SignupWithAccountRequest) (*LoginRes
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
 
-	return &LoginResponse{
+	return &dto.LoginResponse{
 		Token: token,
-		User: UserResponse{
+		User: dto.UserResponse{
 			ID:        user.ID,
 			Username:  user.Username,
 			Email:     user.Email,
 			Theme:     user.Theme,
 			CreatedAt: user.CreatedAt,
 		},
-		Account: &AccountResponse{
+		Account: &dto.AccountResponse{
 			ID:        account.ID,
 			Name:      account.Name,
 			CreatedAt: account.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -302,12 +253,12 @@ func (s *AuthService) ValidateToken(tokenString string) (userID, accountID strin
 }
 
 // RequestPasswordReset generates a password reset token and saves it to the database
-func (s *AuthService) RequestPasswordReset(email string) (*PasswordResetResponse, error) {
+func (s *AuthService) RequestPasswordReset(email string) (*dto.PasswordResetResponse, error) {
 	// Find user by email
 	var user models.User
 	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
 		// Return success even if user not found (security best practice)
-		return &PasswordResetResponse{
+		return &dto.PasswordResetResponse{
 			Message: "If an account with that email exists, a password reset link has been sent",
 		}, nil
 	}
@@ -352,7 +303,7 @@ func (s *AuthService) RequestPasswordReset(email string) (*PasswordResetResponse
 		}
 	}
 
-	response := &PasswordResetResponse{
+	response := &dto.PasswordResetResponse{
 		Message: "If an account with that email exists, a password reset link has been sent",
 	}
 
