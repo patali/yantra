@@ -18,8 +18,15 @@ func (e *DelayExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 		duration = int(d)
 	}
 
-	// Sleep for the specified duration
-	time.Sleep(time.Duration(duration) * time.Millisecond)
+	// Use context-aware delay that can be cancelled
+	// This allows the delay to be interrupted if the context is cancelled (e.g., server shutdown)
+	select {
+	case <-time.After(time.Duration(duration) * time.Millisecond):
+		// Delay completed normally
+	case <-ctx.Done():
+		// Context was cancelled (timeout, shutdown, etc.)
+		return nil, ctx.Err()
+	}
 
 	output := map[string]interface{}{
 		"delayed_ms": duration,

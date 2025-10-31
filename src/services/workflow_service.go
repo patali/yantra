@@ -5,6 +5,7 @@ import (
 	"github.com/patali/yantra/src/dto"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/patali/yantra/src/db/models"
@@ -465,6 +466,44 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 	}
 
 	return jobID, execution.ID, nil
+}
+
+// ResumeWorkflow resumes a failed or interrupted workflow execution from checkpoint
+func (s *WorkflowService) ResumeWorkflow(ctx context.Context, executionID string) (jobID string, err error) {
+	// Get the execution record
+	var execution models.WorkflowExecution
+	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		return "", fmt.Errorf("execution not found: %w", err)
+	}
+
+	// Verify execution can be resumed (must be in error, running, or interrupted state)
+	if execution.Status != "error" && execution.Status != "running" && execution.Status != "interrupted" {
+		return "", fmt.Errorf("cannot resume execution with status: %s (must be 'error', 'running', or 'interrupted')", execution.Status)
+	}
+
+	// Get the workflow
+	var workflow models.Workflow
+	if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
+		return "", fmt.Errorf("workflow not found: %w", err)
+	}
+
+	// Parse input from original execution
+	var input map[string]interface{}
+	if execution.Input != nil {
+		if err := json.Unmarshal([]byte(*execution.Input), &input); err != nil {
+			return "", fmt.Errorf("failed to parse execution input: %w", err)
+		}
+	}
+
+	// Re-queue the workflow execution with the same execution ID
+	// The workflow engine will detect already-executed nodes and skip them
+	jobID, err = s.queueService.QueueWorkflowExecution(ctx, execution.WorkflowID, execution.ID, input, "resume")
+	if err != nil {
+		return "", fmt.Errorf("failed to queue workflow resumption: %w", err)
+	}
+
+	log.Printf("🔄 Workflow execution queued for resumption: execution_id=%s, job_id=%s", executionID, jobID)
+	return jobID, nil
 }
 
 // GetVersionHistory retrieves version history for a workflow

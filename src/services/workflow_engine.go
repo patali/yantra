@@ -3,23 +3,25 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
-	"github.com/patali/yantra/src/executors"
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/executors"
 	"gorm.io/gorm"
 )
 
 // Abuse prevention limits
 const (
 	MaxExecutionDuration = 30 * time.Minute // Maximum workflow execution time
-	MaxTotalNodes        = 10000             // Maximum total nodes executed in a workflow
-	MaxLoopDepth         = 5                 // Maximum nested loop depth
-	MaxIterations        = 10000             // Global maximum iterations per loop
-	MaxAccumulatorSize   = 10 * 1024 * 1024  // 10MB max accumulated data size
-	MaxDataSize          = 10 * 1024 * 1024  // 10MB max input/output size
+	MaxTotalNodes        = 10000            // Maximum total nodes executed in a workflow
+	MaxLoopDepth         = 5                // Maximum nested loop depth
+	MaxIterations        = 10000            // Global maximum iterations per loop
+	MaxAccumulatorSize   = 10 * 1024 * 1024 // 10MB max accumulated data size
+	MaxDataSize          = 10 * 1024 * 1024 // 10MB max input/output size
 )
 
 type WorkflowEngineService struct {
@@ -63,8 +65,22 @@ func (s *WorkflowEngineService) checkExecutionLimits(ctx context.Context, limits
 	// Check for context cancellation or timeout
 	select {
 	case <-ctx.Done():
+		// Distinguish between timeout and cancellation (e.g., server shutdown)
+		err := ctx.Err()
 		elapsed := time.Since(limits.startTime)
-		return fmt.Errorf("workflow execution timeout after %v (limit: %v)", elapsed, MaxExecutionDuration)
+
+		if err == context.DeadlineExceeded {
+			// Actual timeout - elapsed time exceeded the limit
+			return fmt.Errorf("workflow execution timeout after %v (limit: %v)", elapsed, MaxExecutionDuration)
+		} else if err == context.Canceled {
+			// Context was cancelled (e.g., server shutdown, graceful stop)
+			// This is not a timeout - return a special error that can be checked upstream
+			// to determine if the workflow should remain in "running" state for resumption
+			return fmt.Errorf("workflow execution interrupted (context cancelled) after %v - can be resumed: %w", elapsed, err)
+		} else {
+			// Unknown cancellation reason
+			return fmt.Errorf("workflow execution cancelled: %v (after %v): %w", err, elapsed, err)
+		}
 	default:
 	}
 
@@ -85,9 +101,61 @@ func (s *WorkflowEngineService) checkExecutionLimits(ctx context.Context, limits
 func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID, executionID, inputJSON, triggerType string) error {
 	log.Printf("🔄 Starting workflow execution: %s (execution: %s)", workflowID, executionID)
 
+	// Get the existing execution record (created before queuing the job)
+	// We need this early to calculate remaining time for context timeout
+	var execution models.WorkflowExecution
+	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		return fmt.Errorf("execution record not found: %w", err)
+	}
+
+	// Check for checkpoint to determine if we're resuming
+	var completedNodes []models.WorkflowNodeExecution
+	s.db.Where("execution_id = ? AND status = ?", executionID, "success").
+		Find(&completedNodes)
+
+	isResuming := len(completedNodes) > 0
+
+	// When resuming, check if we've already exceeded the time limit
+	// This prevents trying to continue when there's no time remaining
+	if isResuming {
+		elapsed := time.Since(execution.StartedAt)
+		if elapsed >= MaxExecutionDuration {
+			// Already exceeded limit - fail immediately with clear error
+			return fmt.Errorf("workflow execution exceeded maximum duration: elapsed %v >= limit %v", elapsed, MaxExecutionDuration)
+		}
+		log.Printf("⏱️  Resuming workflow: %v elapsed, %v remaining (limit: %v)", elapsed, MaxExecutionDuration-elapsed, MaxExecutionDuration)
+	}
+
 	// Create context with timeout for abuse prevention
-	execCtx, cancel := context.WithTimeout(ctx, MaxExecutionDuration)
+	// Calculate timeout based on remaining time when resuming
+	var timeoutDuration time.Duration
+	if isResuming {
+		elapsed := time.Since(execution.StartedAt)
+		timeoutDuration = MaxExecutionDuration - elapsed
+		// Ensure minimum timeout of 1 second for safety
+		if timeoutDuration < 1*time.Second {
+			timeoutDuration = 1 * time.Second
+		}
+	} else {
+		timeoutDuration = MaxExecutionDuration
+	}
+
+	// Create context with timeout
+	// When resuming, use background context to prevent parent cancellation (e.g., shutdown) from interrupting
+	// For fresh executions, use parent context to respect shutdown signals
+	var baseCtx context.Context
+	if isResuming {
+		// Use background context for resumed workflows to allow completion even during shutdown
+		baseCtx = context.Background()
+		log.Printf("⏱️  Using background context for resumed workflow to prevent cancellation propagation")
+	} else {
+		// Use parent context for fresh workflows
+		baseCtx = ctx
+	}
+
+	execCtx, cancel := context.WithTimeout(baseCtx, timeoutDuration)
 	defer cancel()
+	log.Printf("⏱️  Created execution context with timeout: %v", timeoutDuration)
 
 	// Get workflow
 	var workflow models.Workflow
@@ -122,14 +190,51 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 		return fmt.Errorf("input data too large: %w", err)
 	}
 
-	// Get the existing execution record (created before queuing the job)
-	var execution models.WorkflowExecution
-	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
-		return fmt.Errorf("execution record not found: %w", err)
+	checkpoint := make(map[string]*models.WorkflowNodeExecution)
+	for i := range completedNodes {
+		checkpoint[completedNodes[i].NodeID] = &completedNodes[i]
 	}
 
-	// Update status to running
-	s.db.Model(&execution).Update("status", "running")
+	// Count all completed node executions (including loop iterations) for limit tracking
+	// This ensures that resuming from a checkpoint accounts for previously executed nodes
+	var completedCount int64
+	s.db.Model(&models.WorkflowNodeExecution{}).
+		Where("execution_id = ? AND status = ?", executionID, "success").
+		Count(&completedCount)
+
+	// Determine the actual start time for limit tracking
+	// When resuming from a checkpoint, use the original execution start time
+	// Otherwise use the current time for fresh executions
+	var actualStartTime time.Time
+	if isResuming {
+		// Resuming: use the original execution start time to properly track total duration
+		actualStartTime = execution.StartedAt
+		log.Printf("🔄 Resuming workflow execution from checkpoint: %d unique nodes already completed, %d total node executions, original start: %v", len(checkpoint), completedCount, actualStartTime)
+	} else {
+		// Fresh execution: use current time
+		actualStartTime = time.Now()
+		log.Printf("🆕 Starting fresh workflow execution")
+	}
+
+	// Update status to running when resuming (transition from interrupted/error to running)
+	// Clear any previous error messages since we're resuming from checkpoint
+	// or keep as running if already running
+	if execution.Status != "running" {
+		updates := map[string]interface{}{
+			"status": "running",
+		}
+		// Clear error field when resuming since we're starting fresh from checkpoint
+		if execution.Error != nil {
+			updates["error"] = nil
+			log.Printf("🔄 Clearing previous error message when resuming from checkpoint")
+		}
+		s.db.Model(&execution).Updates(updates)
+		log.Printf("🔄 Transitioning workflow execution from '%s' to 'running' for resumption", execution.Status)
+	} else if execution.Error != nil {
+		// Even if already running, clear stale error messages when resuming
+		s.db.Model(&execution).Update("error", nil)
+		log.Printf("🔄 Clearing stale error message from running workflow execution")
+	}
 
 	// Parse workflow definition
 	var definition map[string]interface{}
@@ -138,24 +243,47 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 	}
 
 	// Initialize execution limits tracker
+	// Start with the count of already-executed nodes and original start time to properly track limits on resume
 	limits := &executionLimits{
-		nodesExecuted: 0,
+		nodesExecuted: int(completedCount),
 		currentDepth:  0,
-		startTime:     time.Now(),
+		startTime:     actualStartTime,
 	}
 
-	// Execute workflow with limits
-	err := s.executeWorkflowDefinition(execCtx, execution.ID, workflow.AccountID, definition, input, limits)
+	// Execute workflow with limits and checkpoint
+	err := s.executeWorkflowDefinition(execCtx, execution.ID, workflow.AccountID, definition, input, limits, checkpoint)
 
 	// Update execution status
 	now := time.Now()
 	if err != nil {
 		errMsg := err.Error()
-		s.db.Model(&execution).Updates(map[string]interface{}{
-			"status":       "error",
-			"error":        errMsg,
-			"completed_at": now,
-		})
+
+		// Check if this is a cancellation (shutdown/interruption) rather than a real error
+		// Only context.Canceled should keep the execution in "running" state for resumption
+		// context.DeadlineExceeded is a real timeout error and should mark as failed
+		isCancellation := false
+		if errors.Is(err, context.Canceled) ||
+			strings.Contains(errMsg, "interrupted") ||
+			strings.Contains(errMsg, "context cancelled") {
+			isCancellation = true
+		}
+
+		if isCancellation {
+			// Mark execution as "interrupted" so it can be clearly identified for resumption
+			// Don't set completed_at, so the workflow can be resumed
+			s.db.Model(&execution).Updates(map[string]interface{}{
+				"status": "interrupted", // Mark as interrupted for resumption
+				"error":  errMsg,        // Store error message for debugging
+			})
+			log.Printf("⏸️  Workflow execution interrupted, marked as 'interrupted' for resumption: %s", executionID)
+		} else {
+			// Real error - mark as failed
+			s.db.Model(&execution).Updates(map[string]interface{}{
+				"status":       "error",
+				"error":        errMsg,
+				"completed_at": now,
+			})
+		}
 		return err
 	}
 
@@ -184,7 +312,8 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 }
 
 // executeWorkflowDefinition executes the workflow definition with proper graph-based execution
-func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, executionID string, accountID *string, definition map[string]interface{}, input map[string]interface{}, limits *executionLimits) error {
+// checkpoint contains already-executed nodes for resumption
+func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, executionID string, accountID *string, definition map[string]interface{}, input map[string]interface{}, limits *executionLimits, checkpoint map[string]*models.WorkflowNodeExecution) error {
 	nodes, ok := definition["nodes"].([]interface{})
 	if !ok {
 		return fmt.Errorf("invalid workflow definition: missing nodes")
@@ -266,6 +395,29 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 		queue = queue[1:]
 
 		if executed[currentNodeID] {
+			continue
+		}
+
+		// CHECK CHECKPOINT: Skip if already executed successfully
+		if checkpointNode, exists := checkpoint[currentNodeID]; exists {
+			log.Printf("⏭️  Skipping already-executed node: %s (status: %s)", currentNodeID, checkpointNode.Status)
+
+			// Load output from checkpoint
+			if checkpointNode.Output != nil {
+				var output map[string]interface{}
+				if err := json.Unmarshal([]byte(*checkpointNode.Output), &output); err == nil {
+					nodeOutputs[currentNodeID] = output
+					log.Printf("  📥 Loaded output from checkpoint for node: %s", currentNodeID)
+				}
+			}
+
+			// Mark as executed and add children to queue
+			executed[currentNodeID] = true
+			for _, nextNodeID := range adjacencyList[currentNodeID] {
+				if !executed[nextNodeID] {
+					queue = append(queue, nextNodeID)
+				}
+			}
 			continue
 		}
 
@@ -1113,7 +1265,7 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 
 		// Still output the results even with no body nodes
 		finalOutput := map[string]interface{}{
-			"iteration_count": iterationCount,
+			"iteration_count":   iterationCount,
 			accumulatorVariable: []interface{}{},
 		}
 		nodeOutputs[loopNodeID] = finalOutput
@@ -1212,7 +1364,7 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 
 	// Output final accumulated results
 	finalOutput := map[string]interface{}{
-		"iteration_count":  iterationCount,
+		"iteration_count":   iterationCount,
 		accumulatorVariable: accumulated,
 	}
 	nodeOutputs[loopNodeID] = finalOutput

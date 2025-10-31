@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/dto"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"

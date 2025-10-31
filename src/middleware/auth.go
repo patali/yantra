@@ -9,25 +9,32 @@ import (
 )
 
 // AuthMiddleware validates JWT tokens and sets user context
+// Supports both Authorization header and token query parameter (for SSE/EventSource which doesn't support custom headers)
 func AuthMiddleware(authService *services.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get Authorization header
+		var token string
+
+		// Try to get token from Authorization header first
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+		if authHeader != "" {
+			// Extract token from "Bearer <token>"
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				token = parts[1]
+			}
+		}
+
+		// If no token from header, try query parameter (for SSE endpoints)
+		if token == "" {
+			token = c.Query("token")
+		}
+
+		// If still no token, return unauthorized
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header or token query parameter required"})
 			c.Abort()
 			return
 		}
-
-		// Extract token from "Bearer <token>"
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
-			c.Abort()
-			return
-		}
-
-		token := parts[1]
 
 		// Validate token
 		userID, accountID, err := authService.ValidateToken(token)

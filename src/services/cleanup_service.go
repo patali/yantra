@@ -22,99 +22,164 @@ func NewCleanupService(db *gorm.DB) *CleanupService {
 
 // FixStuckExecutions finds and fixes workflow executions that are stuck in "running" state
 // This should be called on application startup
+// Uses deterministic logic based on workflow completion state rather than time-based heuristics:
+// 1. Completed workflows (has "end" node execution) - marks as final status (success/error/partially_failed)
+// 2. Incomplete workflows (no "end" node execution) - marks as "interrupted" for resumption
 func (s *CleanupService) FixStuckExecutions(ctx context.Context) error {
 	log.Println("🧹 Starting cleanup: Checking for stuck workflow executions...")
 
-	type ExecutionStats struct {
-		ExecutionID     string
-		TotalNodes      int64
-		FailedNodes     int64
-		SuccessNodes    int64
-		PendingMessages int64
+	type ExecutionInfo struct {
+		ExecutionID        string
+		WorkflowID         string
+		Version            int
+		TotalNodes         int64
+		FailedNodes        int64
+		SuccessNodes       int64
+		RunningNodes       int64 // Node executions stuck in "running" state
+		PendingMessages    int64
+		HasEndNode         bool // Whether an "end" node executed successfully
+		StartedAt          time.Time
 	}
 
 	// Find all running executions and their stats
-	var stats []ExecutionStats
+	// Check if they have a completed "end" node to determine if they're truly finished
+	// Also check for node executions stuck in "running" state (from crashes)
+	var executionInfos []ExecutionInfo
 	err := s.db.Raw(`
-		SELECT 
+		SELECT
 			we.id as execution_id,
+			we.workflow_id as workflow_id,
+			we.version as version,
+			we.started_at as started_at,
 			COUNT(DISTINCT wne.id) as total_nodes,
 			SUM(CASE WHEN wne.status = 'error' THEN 1 ELSE 0 END) as failed_nodes,
 			SUM(CASE WHEN wne.status = 'success' THEN 1 ELSE 0 END) as success_nodes,
-			COUNT(DISTINCT CASE WHEN om.status IN ('pending', 'processing') THEN om.id END) as pending_messages
+			SUM(CASE WHEN wne.status = 'running' THEN 1 ELSE 0 END) as running_nodes,
+			COUNT(DISTINCT CASE WHEN om.status IN ('pending', 'processing') THEN om.id END) as pending_messages,
+			BOOL_OR(wne.node_type = 'end' AND wne.status = 'success') as has_end_node
 		FROM workflow_executions we
 		LEFT JOIN workflow_node_executions wne ON wne.execution_id = we.id
 		LEFT JOIN outbox_messages om ON om.node_execution_id = wne.id
 		WHERE we.status = 'running'
-		GROUP BY we.id
-	`).Scan(&stats).Error
+		GROUP BY we.id, we.workflow_id, we.version, we.started_at
+	`).Scan(&executionInfos).Error
 
 	if err != nil {
 		return fmt.Errorf("failed to query execution stats: %w", err)
 	}
 
-	if len(stats) == 0 {
+	if len(executionInfos) == 0 {
 		log.Println("✅ No running executions found")
 		return nil
 	}
 
-	log.Printf("🔍 Found %d running executions, checking if any are stuck...", len(stats))
+	log.Printf("🔍 Found %d running executions, checking if any are stuck...", len(executionInfos))
 
 	fixedCount := 0
-	for _, stat := range stats {
+	interruptedCount := 0
+
+	for _, info := range executionInfos {
 		// Skip if there are pending messages (legitimately running)
-		if stat.PendingMessages > 0 {
+		if info.PendingMessages > 0 {
 			log.Printf("  ⏳ Execution %s has %d pending messages, skipping",
-				stat.ExecutionID[:8], stat.PendingMessages)
+				info.ExecutionID[:8], info.PendingMessages)
 			continue
 		}
 
-		// Determine what the status should be
+		// Determine status based on workflow completion state
 		var newStatus string
+		var errorMsg string
 		var shouldFix bool
 
-		if stat.FailedNodes > 0 && stat.SuccessNodes > 0 {
-			newStatus = "partially_failed"
+		// Priority check: If there are node executions stuck in "running" state,
+		// this is a clear sign of a crash - mark as interrupted regardless of other state
+		if info.RunningNodes > 0 {
+			log.Printf("  💥 Execution %s has %d node(s) stuck in 'running' state (server crashed)",
+				info.ExecutionID[:8], info.RunningNodes)
+
+			// First, mark stuck node executions as error so they're completed
+			s.db.Model(&models.WorkflowNodeExecution{}).
+				Where("execution_id = ? AND status = ?", info.ExecutionID, "running").
+				Updates(map[string]interface{}{
+					"status":       "error",
+					"error":        "Node execution interrupted by server crash/restart - workflow can be resumed",
+					"completed_at": time.Now(),
+				})
+
+			// Mark workflow as interrupted
+			newStatus = "interrupted"
+			errorMsg = fmt.Sprintf("Workflow interrupted by server crash with %d node(s) stuck in running state (detected on server restart) - can be resumed from checkpoint", info.RunningNodes)
 			shouldFix = true
-		} else if stat.FailedNodes > 0 && stat.SuccessNodes == 0 {
-			newStatus = "error"
+			interruptedCount++
+		} else if info.HasEndNode {
+			// Case 1: Workflow reached the "end" node - it's complete
+			// Workflow completed, determine final status based on node failures
+			if info.FailedNodes > 0 && info.SuccessNodes > 0 {
+				newStatus = "partially_failed"
+				errorMsg = fmt.Sprintf("%d out of %d nodes failed", info.FailedNodes, info.TotalNodes)
+			} else if info.FailedNodes > 0 {
+				newStatus = "error"
+				errorMsg = fmt.Sprintf("%d out of %d nodes failed", info.FailedNodes, info.TotalNodes)
+			} else {
+				newStatus = "success"
+			}
 			shouldFix = true
-		} else if stat.FailedNodes == 0 && stat.SuccessNodes > 0 {
-			newStatus = "success"
+			log.Printf("  ✓ Execution %s reached end node (completed)", info.ExecutionID[:8])
+		} else {
+			// Case 2: Workflow did NOT reach "end" node - it's interrupted
+			// No pending messages and no stuck nodes means it's not actively running
+			newStatus = "interrupted"
+
+			if info.TotalNodes == 0 {
+				// No nodes executed at all
+				errorMsg = "Workflow interrupted before any nodes executed (detected on server restart) - can be resumed"
+			} else if info.FailedNodes > 0 {
+				// Some nodes failed, workflow stopped
+				errorMsg = fmt.Sprintf("Workflow interrupted after %d node failures (detected on server restart) - can be resumed from checkpoint", info.FailedNodes)
+			} else {
+				// Nodes executed successfully but didn't reach end
+				errorMsg = fmt.Sprintf("Workflow interrupted mid-execution with %d/%d nodes completed (detected on server restart) - can be resumed from checkpoint", info.SuccessNodes, info.TotalNodes)
+			}
 			shouldFix = true
+			interruptedCount++
+			log.Printf("  ⏸️  Execution %s did not reach end node (interrupted)", info.ExecutionID[:8])
 		}
 
 		if shouldFix {
-			log.Printf("  🔧 Fixing execution %s: %d/%d nodes failed, should be: %s",
-				stat.ExecutionID[:8], stat.FailedNodes, stat.TotalNodes, newStatus)
+			log.Printf("  🔧 Fixing execution %s: %d success, %d failed, end_reached=%v → %s",
+				info.ExecutionID[:8], info.SuccessNodes, info.FailedNodes, info.HasEndNode, newStatus)
 
-			now := time.Now()
 			updates := map[string]interface{}{
-				"status":       newStatus,
-				"completed_at": now,
+				"status": newStatus,
 			}
 
-			if stat.FailedNodes > 0 {
-				updates["error"] = fmt.Sprintf("%d out of %d nodes failed",
-					stat.FailedNodes, stat.TotalNodes)
+			// Only set completed_at for final statuses (not for "interrupted")
+			if newStatus != "interrupted" {
+				updates["completed_at"] = time.Now()
+			}
+
+			// Set error message if any
+			if errorMsg != "" {
+				updates["error"] = errorMsg
 			}
 
 			err := s.db.Model(&models.WorkflowExecution{}).
-				Where("id = ?", stat.ExecutionID).
+				Where("id = ?", info.ExecutionID).
 				Updates(updates).Error
 
 			if err != nil {
-				log.Printf("  ❌ Failed to update execution %s: %v", stat.ExecutionID[:8], err)
+				log.Printf("  ❌ Failed to update execution %s: %v", info.ExecutionID[:8], err)
 				continue
 			}
 
 			fixedCount++
-			log.Printf("  ✅ Fixed execution %s → %s", stat.ExecutionID[:8], newStatus)
+			log.Printf("  ✅ Fixed execution %s → %s", info.ExecutionID[:8], newStatus)
 		}
 	}
 
 	if fixedCount > 0 {
-		log.Printf("✅ Cleanup complete: Fixed %d stuck executions", fixedCount)
+		log.Printf("✅ Cleanup complete: Fixed %d stuck executions (%d marked as interrupted for resumption)",
+			fixedCount, interruptedCount)
 	} else {
 		log.Println("✅ Cleanup complete: No stuck executions found")
 	}

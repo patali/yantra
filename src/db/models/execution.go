@@ -11,7 +11,7 @@ type WorkflowExecution struct {
 	ID          string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	WorkflowID  string     `gorm:"type:uuid;not null" json:"workflowId"`
 	Version     int        `gorm:"not null" json:"version"`
-	Status      string     `gorm:"not null" json:"status"`            // running, success, error
+	Status      string     `gorm:"not null" json:"status"`            // running, success, error, interrupted
 	TriggerType string     `gorm:"not null" json:"triggerType"`       // manual, scheduled, api
 	Input       *string    `gorm:"type:text" json:"input,omitempty"`  // JSON string
 	Output      *string    `gorm:"type:text" json:"output,omitempty"` // JSON string

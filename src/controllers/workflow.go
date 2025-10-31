@@ -2,10 +2,11 @@ package controllers
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
 )
 
@@ -34,10 +35,12 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 		workflows.POST("/:id/execute", ctrl.ExecuteWorkflow)
 		workflows.PUT("/:id/schedule", ctrl.UpdateSchedule)
 		workflows.GET("/:id/versions", ctrl.GetVersionHistory)
-		workflows.GET("/:id/executions", ctrl.GetWorkflowExecutions)                 // Frontend endpoint
-		workflows.GET("/:id/executions/:executionId", ctrl.GetWorkflowExecutionById) // Frontend endpoint
-		workflows.POST("/:id/versions/restore", ctrl.RestoreVersion)                 // Frontend endpoint
-		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                     // Frontend endpoint
+		workflows.GET("/:id/executions", ctrl.GetWorkflowExecutions)                       // Frontend endpoint
+		workflows.GET("/:id/executions/:executionId", ctrl.GetWorkflowExecutionById)       // Frontend endpoint
+		workflows.GET("/:id/executions/:executionId/stream", ctrl.StreamWorkflowExecution) // SSE stream endpoint
+		workflows.POST("/:id/executions/:executionId/resume", ctrl.ResumeExecution)        // Resume execution endpoint
+		workflows.POST("/:id/versions/restore", ctrl.RestoreVersion)                       // Frontend endpoint
+		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                           // Frontend endpoint
 	}
 }
 
@@ -229,6 +232,121 @@ func (ctrl *WorkflowController) GetWorkflowExecutionById(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// StreamWorkflowExecution streams workflow execution updates via Server-Sent Events (SSE)
+// GET /api/workflows/:id/executions/:executionId/stream?token=<jwt_token>
+// Note: Token passed as query param since EventSource doesn't support custom headers
+// The auth middleware handles token extraction from query parameter
+func (ctrl *WorkflowController) StreamWorkflowExecution(c *gin.Context) {
+	executionID := c.Param("executionId")
+
+	// Set headers for SSE
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // Disable nginx buffering
+
+	// Create a channel to detect client disconnect
+	ctx := c.Request.Context()
+	ticker := time.NewTicker(1 * time.Second) // Poll every second
+	defer ticker.Stop()
+
+	var lastExecution *dto.ExecutionResponse
+	var lastNodeCount int
+
+	// Send initial connection message
+	c.SSEvent("connected", gin.H{"message": "Connected to execution stream"})
+	c.Writer.Flush()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Client disconnected
+			return
+		case <-ticker.C:
+			// Fetch current execution state
+			execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionID)
+			if err != nil {
+				c.SSEvent("error", gin.H{"error": "Execution not found"})
+				c.Writer.Flush()
+				return
+			}
+
+			// Check if execution has changed
+			hasChanged := false
+			if lastExecution == nil {
+				hasChanged = true
+			} else {
+				// Check status change
+				if lastExecution.Status != execution.Status {
+					hasChanged = true
+				}
+				// Check node executions count change
+				if len(execution.NodeExecutions) != lastNodeCount {
+					hasChanged = true
+				}
+				// Check for new node executions or status changes
+				if len(execution.NodeExecutions) > 0 && len(lastExecution.NodeExecutions) > 0 {
+					// Compare latest node executions
+					latestLastNode := lastExecution.NodeExecutions[0]
+					for _, newNode := range execution.NodeExecutions {
+						if newNode.ID == latestLastNode.ID {
+							// Check if status changed
+							if newNode.Status != latestLastNode.Status {
+								hasChanged = true
+								break
+							}
+						} else {
+							// New node execution found
+							hasChanged = true
+							break
+						}
+					}
+				}
+			}
+
+			if hasChanged {
+				// Send update
+				c.SSEvent("update", execution)
+				c.Writer.Flush()
+
+				lastExecution = execution
+				lastNodeCount = len(execution.NodeExecutions)
+
+				// If execution is complete (final state), stop streaming
+				// Note: "interrupted" can be resumed, so we keep connection open for it
+				if execution.Status == "success" || execution.Status == "error" || execution.Status == "partially_failed" || execution.Status == "cancelled" {
+					c.SSEvent("complete", gin.H{"status": execution.Status})
+					c.Writer.Flush()
+					// Keep connection open for a few more seconds to catch any final updates
+					time.Sleep(2 * time.Second)
+					return
+				}
+			}
+
+			// Send heartbeat to keep connection alive
+			c.SSEvent("heartbeat", gin.H{"timestamp": time.Now().Unix()})
+			c.Writer.Flush()
+		}
+	}
+}
+
+// ResumeExecution resumes a failed or interrupted workflow execution
+// POST /api/workflows/:id/executions/:executionId/resume
+func (ctrl *WorkflowController) ResumeExecution(c *gin.Context) {
+	executionID := c.Param("executionId")
+
+	jobID, err := ctrl.workflowService.ResumeWorkflow(c.Request.Context(), executionID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"job_id":  jobID,
+		"message": "Workflow execution queued for resumption",
+	})
 }
 
 // RestoreVersion restores a workflow to a previous version
