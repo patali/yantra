@@ -6,18 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 )
 
 type SlackExecutor struct {
 	httpClient *http.Client
 }
 
-func NewSlackExecutor() *SlackExecutor {
+func NewSlackExecutor(client *http.Client) *SlackExecutor {
 	return &SlackExecutor{
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		httpClient: client,
 	}
 }
 

@@ -35,10 +35,10 @@ type executionLimits struct {
 	startTime     time.Time
 }
 
-func NewWorkflowEngineService(db *gorm.DB) *WorkflowEngineService {
+func NewWorkflowEngineService(db *gorm.DB, emailService executors.EmailServiceInterface) *WorkflowEngineService {
 	return &WorkflowEngineService{
 		db:              db,
-		executorFactory: executors.NewExecutorFactory(db),
+		executorFactory: executors.NewExecutorFactory(db, emailService),
 		outboxService:   NewOutboxService(db),
 	}
 }

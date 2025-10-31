@@ -47,8 +47,11 @@ func main() {
 		log.Fatalf("❌ Failed to run GORM migrations: %v", err)
 	}
 
-	// Initialize workflow engine
-	workflowEngine := services.NewWorkflowEngineService(database.DB)
+	// Initialize email service (needed by workflow engine and outbox worker)
+	emailService := services.NewEmailService(database.DB)
+
+	// Initialize workflow engine with email service dependency
+	workflowEngine := services.NewWorkflowEngineService(database.DB, emailService)
 
 	// Initialize River client with workflow engine
 	riverClient, err := riverinternal.NewClient(ctx, cfg.DatabaseURL, workflowEngine)
@@ -80,11 +83,7 @@ func main() {
 
 	// Initialize and start outbox worker
 	outboxService := services.NewOutboxService(database.DB)
-	executorFactory := executors.NewExecutorFactory(database.DB)
-
-	// Initialize email service and inject into executor factory
-	emailService := services.NewEmailService(database.DB)
-	executorFactory.SetEmailService(emailService)
+	executorFactory := executors.NewExecutorFactory(database.DB, emailService)
 
 	outboxWorker := services.NewOutboxWorkerService(outboxService, executorFactory)
 	outboxWorker.Start(ctx)

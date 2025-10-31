@@ -45,15 +45,11 @@ type EmailExecutor struct {
 	emailService EmailServiceInterface
 }
 
-func NewEmailExecutor(db *gorm.DB) *EmailExecutor {
+func NewEmailExecutor(db *gorm.DB, emailService EmailServiceInterface) *EmailExecutor {
 	return &EmailExecutor{
-		db: db,
+		db:           db,
+		emailService: emailService,
 	}
-}
-
-// SetEmailService sets the email service (called after initialization to avoid circular dependency)
-func (e *EmailExecutor) SetEmailService(service EmailServiceInterface) {
-	e.emailService = service
 }
 
 func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*ExecutionResult, error) {

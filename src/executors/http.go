@@ -9,38 +9,16 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync"
-	"time"
 )
 
 type HTTPExecutor struct {
-	client     *http.Client
-	clientOnce sync.Once
+	client *http.Client
 }
 
-func NewHTTPExecutor() *HTTPExecutor {
-	return &HTTPExecutor{}
-}
-
-// getClient returns a shared HTTP client with connection pooling
-func (e *HTTPExecutor) getClient() *http.Client {
-	e.clientOnce.Do(func() {
-		// Configure transport with connection pooling
-		transport := &http.Transport{
-			MaxIdleConns:        100,              // Maximum idle connections across all hosts
-			MaxIdleConnsPerHost: 10,               // Maximum idle connections per host
-			MaxConnsPerHost:     100,              // Maximum connections per host
-			IdleConnTimeout:     90 * time.Second, // How long idle connections stay open
-			TLSHandshakeTimeout: 10 * time.Second, // TLS handshake timeout
-			DisableCompression:  false,            // Enable compression
-		}
-
-		e.client = &http.Client{
-			Timeout:   30 * time.Second,
-			Transport: transport,
-		}
-	})
-	return e.client
+func NewHTTPExecutor(client *http.Client) *HTTPExecutor {
+	return &HTTPExecutor{
+		client: client,
+	}
 }
 
 func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*ExecutionResult, error) {
@@ -110,12 +88,9 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 		req.Header.Set(key, value)
 	}
 
-	// Use shared HTTP client with connection pooling
-	client := e.getClient()
-
-	// Execute request
+	// Execute request using shared HTTP client
 	fmt.Printf("🌐 HTTP %s request to %s\n", method, url)
-	resp, err := client.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
