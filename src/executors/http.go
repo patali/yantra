@@ -28,13 +28,8 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 		return nil, fmt.Errorf("url is required")
 	}
 
-	fmt.Printf("🔍 HTTP Executor - Original URL from config: %s\n", url)
-	fmt.Printf("🔍 HTTP Executor - Input data: %+v\n", execCtx.Input)
-
 	// Replace template variables in URL with input data
 	url = e.replaceTemplateVariables(url, execCtx.Input)
-
-	fmt.Printf("🔍 HTTP Executor - URL after template replacement: %s\n", url)
 
 	method, ok := execCtx.NodeConfig["method"].(string)
 	if !ok || method == "" {
@@ -89,12 +84,14 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}
 
 	// Execute request using shared HTTP client
-	fmt.Printf("🌐 HTTP %s request to %s\n", method, url)
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Log only HTTP status
+	fmt.Printf("🌐 HTTP %s %s → %d\n", method, url, resp.StatusCode)
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
