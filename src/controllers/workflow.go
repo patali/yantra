@@ -240,6 +240,31 @@ func (ctrl *WorkflowController) GetWorkflowExecutionById(c *gin.Context) {
 // The auth middleware handles token extraction from query parameter
 func (ctrl *WorkflowController) StreamWorkflowExecution(c *gin.Context) {
 	executionID := c.Param("executionId")
+	workflowID := c.Param("id")
+
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.SSEvent("error", gin.H{"error": "Unauthorized"})
+		c.Writer.Flush()
+		return
+	}
+
+	// SECURITY: Verify workflow belongs to user's account
+	workflow, err := ctrl.workflowService.GetWorkflowByIdAndAccount(workflowID, accountID)
+	if err != nil {
+		c.SSEvent("error", gin.H{"error": "Workflow not found or access denied"})
+		c.Writer.Flush()
+		return
+	}
+
+	// SECURITY: Verify execution belongs to this workflow
+	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionID)
+	if err != nil || execution.WorkflowID != workflow.ID {
+		c.SSEvent("error", gin.H{"error": "Execution not found or access denied"})
+		c.Writer.Flush()
+		return
+	}
 
 	// Set headers for SSE
 	c.Header("Content-Type", "text/event-stream")
@@ -265,7 +290,7 @@ func (ctrl *WorkflowController) StreamWorkflowExecution(c *gin.Context) {
 			// Client disconnected
 			return
 		case <-ticker.C:
-			// Fetch current execution state
+			// Fetch current execution state (already verified ownership above)
 			execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionID)
 			if err != nil {
 				c.SSEvent("error", gin.H{"error": "Execution not found"})
