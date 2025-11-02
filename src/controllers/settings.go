@@ -60,15 +60,14 @@ type EmailProviderRequest struct {
 // GetEmailProviders returns all email providers for the account
 // GET /api/settings/email-providers
 func (ctrl *SettingsController) GetEmailProviders(c *gin.Context) {
-	accountID, exists := middleware.GetAccountID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
 		return
 	}
 
 	var providers []models.EmailProviderSettings
 	if err := ctrl.db.Where("account_id = ?", accountID).Find(&providers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		middleware.RespondInternalError(c, err.Error())
 		return
 	}
 
@@ -77,17 +76,19 @@ func (ctrl *SettingsController) GetEmailProviders(c *gin.Context) {
 		providers = []models.EmailProviderSettings{}
 	}
 
-	c.JSON(http.StatusOK, providers)
+	middleware.RespondSuccess(c, http.StatusOK, providers)
 }
 
 // CreateEmailProvider creates or updates an email provider configuration
 // POST /api/settings/email
 func (ctrl *SettingsController) CreateEmailProvider(c *gin.Context) {
-	accountID, _ := middleware.GetAccountID(c)
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
 
 	var req EmailProviderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
@@ -114,13 +115,13 @@ func (ctrl *SettingsController) CreateEmailProvider(c *gin.Context) {
 		}
 
 		if err := ctrl.db.Model(&existing).Updates(updates).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			middleware.RespondInternalError(c, err.Error())
 			return
 		}
 
 		// Reload the updated provider
 		ctrl.db.First(&existing, "id = ?", existing.ID)
-		c.JSON(http.StatusOK, existing)
+		middleware.RespondSuccess(c, http.StatusOK, existing)
 		return
 	}
 
@@ -144,29 +145,31 @@ func (ctrl *SettingsController) CreateEmailProvider(c *gin.Context) {
 	}
 
 	if err := ctrl.db.Create(&provider).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		middleware.RespondInternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusCreated, provider)
+	middleware.RespondSuccess(c, http.StatusCreated, provider)
 }
 
 // UpdateEmailProvider updates an email provider configuration
 // PUT /api/settings/email/:id
 func (ctrl *SettingsController) UpdateEmailProvider(c *gin.Context) {
 	id := c.Param("id")
-	accountID, _ := middleware.GetAccountID(c)
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
 
 	var req EmailProviderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	// Find provider
 	var provider models.EmailProviderSettings
 	if err := ctrl.db.Where("id = ? AND account_id = ?", id, accountID).First(&provider).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		middleware.RespondNotFound(c, "Provider not found")
 		return
 	}
 
@@ -188,71 +191,78 @@ func (ctrl *SettingsController) UpdateEmailProvider(c *gin.Context) {
 	}
 
 	if err := ctrl.db.Model(&provider).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		middleware.RespondInternalError(c, err.Error())
 		return
 	}
 
 	// Reload
 	ctrl.db.First(&provider, "id = ?", id)
 
-	c.JSON(http.StatusOK, provider)
+	middleware.RespondSuccess(c, http.StatusOK, provider)
 }
 
 // DeleteEmailProvider deletes an email provider configuration
 // DELETE /api/settings/email/:id
 func (ctrl *SettingsController) DeleteEmailProvider(c *gin.Context) {
 	id := c.Param("id")
-	accountID, _ := middleware.GetAccountID(c)
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
 
 	result := ctrl.db.Where("id = ? AND account_id = ?", id, accountID).Delete(&models.EmailProviderSettings{})
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		middleware.RespondInternalError(c, result.Error.Error())
 		return
 	}
 
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		middleware.RespondNotFound(c, "Provider not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Provider deleted successfully"})
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{"message": "Provider deleted successfully"})
 }
 
 // GetEmailProviderByName gets a specific email provider by name
 // GET /api/settings/email-providers/:provider
 func (ctrl *SettingsController) GetEmailProviderByName(c *gin.Context) {
 	provider := c.Param("provider")
-	accountID, _ := middleware.GetAccountID(c)
-
-	var emailProvider models.EmailProviderSettings
-	if err := ctrl.db.Where("account_id = ? AND provider = ?", accountID, provider).First(&emailProvider).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
 		return
 	}
 
-	c.JSON(http.StatusOK, emailProvider)
+	var emailProvider models.EmailProviderSettings
+	if err := ctrl.db.Where("account_id = ? AND provider = ?", accountID, provider).First(&emailProvider).Error; err != nil {
+		middleware.RespondNotFound(c, "Provider not found")
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusOK, emailProvider)
 }
 
 // TestEmailProvider tests an email provider configuration
 // POST /api/settings/email-providers/test
 func (ctrl *SettingsController) TestEmailProvider(c *gin.Context) {
-	accountID, _ := middleware.GetAccountID(c)
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
+	userID, err := middleware.RequireUserID(c)
+	if err != nil {
 		return
 	}
 
 	// Get the current user's email
 	var user models.User
 	if err := ctrl.db.Where("id = ?", userID).First(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get user information"})
+		middleware.RespondInternalError(c, "Failed to get user information")
 		return
 	}
 
 	var req EmailProviderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
@@ -285,14 +295,14 @@ func (ctrl *SettingsController) TestEmailProvider(c *gin.Context) {
 			errorMsg = err.Error()
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		middleware.RespondSuccess(c, http.StatusOK, gin.H{
 			"success": false,
 			"error":   errorMsg,
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{
 		"success":   true,
 		"message":   "Test email sent successfully! Check your inbox at " + user.Email,
 		"messageId": result.MessageID,
@@ -302,13 +312,15 @@ func (ctrl *SettingsController) TestEmailProvider(c *gin.Context) {
 // SetActiveEmailProvider sets the active email provider
 // PUT /api/settings/email-providers/activate
 func (ctrl *SettingsController) SetActiveEmailProvider(c *gin.Context) {
-	accountID, _ := middleware.GetAccountID(c)
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
 
 	var req struct {
 		Provider string `json:"provider" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
@@ -320,17 +332,17 @@ func (ctrl *SettingsController) SetActiveEmailProvider(c *gin.Context) {
 	// Activate the specified provider
 	var provider models.EmailProviderSettings
 	if err := ctrl.db.Where("account_id = ? AND provider = ?", accountID, req.Provider).First(&provider).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Provider not found"})
+		middleware.RespondNotFound(c, "Provider not found")
 		return
 	}
 
 	provider.IsActive = true
 	if err := ctrl.db.Save(&provider).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		middleware.RespondInternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, provider)
+	middleware.RespondSuccess(c, http.StatusOK, provider)
 }
 
 // Helper functions

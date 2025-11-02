@@ -39,55 +39,52 @@ func (ctrl *AuthController) RegisterRoutes(rg *gin.RouterGroup) {
 // POST /api/auth/register
 func (ctrl *AuthController) SignupWithAccount(c *gin.Context) {
 	var req dto.SignupWithAccountRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	response, err := ctrl.authService.SignupWithAccount(req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		middleware.RespondBadRequest(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusCreated, response)
+	middleware.RespondSuccess(c, http.StatusCreated, response)
 }
 
 // Login handles user authentication
 // POST /api/auth/login
 func (ctrl *AuthController) Login(c *gin.Context) {
 	var req dto.LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	response, err := ctrl.authService.Login(req)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		middleware.RespondUnauthorized(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	middleware.RespondSuccess(c, http.StatusOK, response)
 }
 
 // GetMe returns the current user information
 // GET /api/auth/me
 func (ctrl *AuthController) GetMe(c *gin.Context) {
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	userID, err := middleware.RequireUserID(c)
+	if err != nil {
 		return
 	}
 
 	// Fetch user from database
 	var user models.User
 	if err := c.MustGet("db").(*gorm.DB).First(&user, "id = ?", userID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		middleware.RespondNotFound(c, "User not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.UserResponse{
+	middleware.RespondSuccess(c, http.StatusOK, dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
@@ -99,10 +96,16 @@ func (ctrl *AuthController) GetMe(c *gin.Context) {
 // ValidateToken validates the current JWT token
 // POST /api/auth/validate
 func (ctrl *AuthController) ValidateToken(c *gin.Context) {
-	userID, _ := middleware.GetUserID(c)
-	accountID, _ := middleware.GetAccountID(c)
+	userID, err := middleware.RequireUserID(c)
+	if err != nil {
+		return
+	}
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{
 		"valid":     true,
 		"userId":    userID,
 		"accountId": accountID,
@@ -113,56 +116,52 @@ func (ctrl *AuthController) ValidateToken(c *gin.Context) {
 // POST /api/auth/request-password-reset
 func (ctrl *AuthController) RequestPasswordReset(c *gin.Context) {
 	var req dto.RequestPasswordResetRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	response, err := ctrl.authService.RequestPasswordReset(req.Email)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process password reset request"})
+		middleware.RespondInternalError(c, "Failed to process password reset request")
 		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	middleware.RespondSuccess(c, http.StatusOK, response)
 }
 
 // ResetPassword resets a user's password using a valid reset token
 // POST /api/auth/reset-password
 func (ctrl *AuthController) ResetPassword(c *gin.Context) {
 	var req dto.ResetPasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	if err := ctrl.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		middleware.RespondBadRequest(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
 
 // ChangePassword changes a user's password (requires authentication and current password)
 // POST /api/auth/change-password
 func (ctrl *AuthController) ChangePassword(c *gin.Context) {
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+	userID, err := middleware.RequireUserID(c)
+	if err != nil {
 		return
 	}
 
 	var req dto.ChangePasswordRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !middleware.BindJSON(c, &req) {
 		return
 	}
 
 	if err := ctrl.authService.ChangePassword(userID, req.CurrentPassword, req.NewPassword); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		middleware.RespondBadRequest(c, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{"message": "Password changed successfully"})
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -68,4 +69,56 @@ func GetAccountID(c *gin.Context) (string, bool) {
 		return "", false
 	}
 	return accountID.(string), true
+}
+
+// RequireAccountID is a helper that extracts account ID and returns error if missing
+// Sends 401 response and aborts request if not found
+// This is the recommended helper for routes protected by AuthMiddleware
+//
+// Usage:
+//   accountID, err := middleware.RequireAccountID(c)
+//   if err != nil {
+//       return // Response already sent
+//   }
+func RequireAccountID(c *gin.Context) (string, error) {
+	accountID, exists := GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.Abort()
+		return "", errors.New("unauthorized")
+	}
+	return accountID, nil
+}
+
+// RequireUserID is a helper that extracts user ID and returns error if missing
+// Sends 401 response and aborts request if not found
+// This is the recommended helper for routes protected by AuthMiddleware
+//
+// Usage:
+//   userID, err := middleware.RequireUserID(c)
+//   if err != nil {
+//       return // Response already sent
+//   }
+func RequireUserID(c *gin.Context) (string, error) {
+	userID, exists := GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		c.Abort()
+		return "", errors.New("unauthorized")
+	}
+	return userID, nil
+}
+
+// MustGetAccountID extracts account ID from context (for use in auth-protected routes)
+// Sends 401 and aborts request if missing - ensures AuthMiddleware is applied to the route
+// Deprecated: Use RequireAccountID instead for more idiomatic Go error handling
+func MustGetAccountID(c *gin.Context) (string, error) {
+	return RequireAccountID(c)
+}
+
+// MustGetUserID extracts user ID from context (for use in auth-protected routes)
+// Sends 401 and aborts request if missing - ensures AuthMiddleware is applied to the route
+// Deprecated: Use RequireUserID instead for more idiomatic Go error handling
+func MustGetUserID(c *gin.Context) (string, error) {
+	return RequireUserID(c)
 }
