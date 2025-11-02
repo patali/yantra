@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/db/repositories"
 	"github.com/patali/yantra/src/dto"
@@ -63,17 +65,17 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowRespo
 		versionCount, _ := s.repo.WorkflowVersion().CountByWorkflowID(ctx, w.ID)
 
 		responses[i] = dto.WorkflowResponse{
-			ID:                w.ID,
-			Name:              w.Name,
-			Description:       w.Description,
-			IsActive:          w.IsActive,
-			Schedule:          w.Schedule,
-			Timezone:          w.Timezone,
-			WebhookPath:       w.WebhookPath,
+			ID:                 w.ID,
+			Name:               w.Name,
+			Description:        w.Description,
+			IsActive:           w.IsActive,
+			Schedule:           w.Schedule,
+			Timezone:           w.Timezone,
+			WebhookPath:        w.WebhookPath,
 			WebhookRequireAuth: w.WebhookRequireAuth,
-			CurrentVersion:    w.CurrentVersion,
-			CreatedBy:         w.CreatedBy,
-			Creator:           creatorDetails,
+			CurrentVersion:     w.CurrentVersion,
+			CreatedBy:          w.CreatedBy,
+			Creator:            creatorDetails,
 			Count: &dto.WorkflowCount{
 				Executions: int(executionCount),
 				Versions:   int(versionCount),
@@ -113,6 +115,27 @@ func (s *WorkflowService) GetWorkflowByIdAndAccount(id, accountID string) (*mode
 	return workflow, nil
 }
 
+// validateWebhookPath validates and sanitizes webhook path input
+func validateWebhookPath(path *string) (*string, error) {
+	if path == nil || *path == "" {
+		return nil, nil
+	}
+
+	webhookPath := strings.TrimSpace(*path)
+
+	// Check for path traversal attempts
+	if strings.Contains(webhookPath, "..") || strings.Contains(webhookPath, "/") || strings.Contains(webhookPath, "\\") {
+		return nil, fmt.Errorf("webhook path contains invalid characters")
+	}
+
+	// Limit path length to prevent abuse
+	if len(webhookPath) > 100 {
+		return nil, fmt.Errorf("webhook path exceeds maximum length of 100 characters")
+	}
+
+	return &webhookPath, nil
+}
+
 // CreateWorkflow creates a new workflow with optional scheduling
 func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWorkflowRequest, createdBy, accountID string) (*models.Workflow, error) {
 	timezone := "UTC"
@@ -123,6 +146,12 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	isActive := true
 	if req.IsActive != nil {
 		isActive = *req.IsActive
+	}
+
+	// SECURITY: Validate webhook path if provided
+	validatedWebhookPath, err := validateWebhookPath(req.WebhookPath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid webhook path: %w", err)
 	}
 
 	definitionJSON, err := json.Marshal(req.Definition)
@@ -141,7 +170,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 			IsActive:           isActive,
 			Schedule:           req.Schedule,
 			Timezone:           timezone,
-			WebhookPath:        req.WebhookPath,
+			WebhookPath:        validatedWebhookPath,
 			WebhookRequireAuth: req.WebhookRequireAuth != nil && *req.WebhookRequireAuth,
 			CurrentVersion:     1,
 			AccountID:          &accountID,
@@ -300,7 +329,12 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 		updates["timezone"] = *req.Timezone
 	}
 	if req.WebhookPath != nil {
-		updates["webhook_path"] = req.WebhookPath
+		// SECURITY: Validate webhook path before updating
+		validatedWebhookPath, err := validateWebhookPath(req.WebhookPath)
+		if err != nil {
+			return nil, fmt.Errorf("invalid webhook path: %w", err)
+		}
+		updates["webhook_path"] = validatedWebhookPath
 	}
 	if req.WebhookRequireAuth != nil {
 		updates["webhook_require_auth"] = *req.WebhookRequireAuth
@@ -439,6 +473,12 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 
 // ExecuteWorkflowWithTrigger queues a workflow for execution with a specific trigger type
 func (s *WorkflowService) ExecuteWorkflowWithTrigger(ctx context.Context, id string, input map[string]interface{}, triggerType string) (jobID string, executionID string, err error) {
+	// SECURITY: Validate workflow ID format (must be valid UUID)
+	// This provides defense in depth even though route params should already be validated
+	if _, err := uuid.Parse(id); err != nil {
+		return "", "", fmt.Errorf("invalid workflow identifier: %w", err)
+	}
+
 	// Check if workflow exists
 	_, err = s.repo.Workflow().FindByID(ctx, id)
 	if err != nil {
@@ -451,8 +491,19 @@ func (s *WorkflowService) ExecuteWorkflowWithTrigger(ctx context.Context, id str
 		return "", "", err
 	}
 
-	// Create execution record first
-	inputJSON, _ := json.Marshal(input)
+	// SECURITY: Validate input size before creating execution record
+	// This prevents DoS attacks via large payloads
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to serialize input: %w", err)
+	}
+
+	// MaxDataSize is 10MB as defined in workflow_engine.go
+	const MaxDataSize = 10 * 1024 * 1024
+	if len(inputJSON) > MaxDataSize {
+		return "", "", fmt.Errorf("input size (%d bytes) exceeds maximum allowed (%d bytes)", len(inputJSON), MaxDataSize)
+	}
+
 	inputStr := string(inputJSON)
 
 	execution := models.WorkflowExecution{

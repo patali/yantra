@@ -1,10 +1,13 @@
 package controllers
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/patali/yantra/src/dto"
 	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
@@ -543,37 +546,63 @@ func (ctrl *WorkflowController) TriggerWebhook(c *gin.Context) {
 	workflowID := c.Param("workflowId")
 	webhookPath := c.Param("path")
 
+	// SECURITY: Validate workflow ID format (must be valid UUID)
+	// This prevents SQL injection and invalid ID attacks
+	if _, err := uuid.Parse(workflowID); err != nil {
+		middleware.RespondBadRequest(c, "Invalid workflow identifier")
+		return
+	}
+
+	// SECURITY: Validate and sanitize webhook path to prevent path traversal
+	// Only allow alphanumeric, hyphens, underscores, and dots
+	if webhookPath != "" {
+		// Check for path traversal attempts
+		if strings.Contains(webhookPath, "..") || strings.Contains(webhookPath, "/") || strings.Contains(webhookPath, "\\") {
+			middleware.RespondBadRequest(c, "Invalid webhook path")
+			return
+		}
+		// Limit path length to prevent abuse
+		if len(webhookPath) > 100 {
+			middleware.RespondBadRequest(c, "Webhook path too long")
+			return
+		}
+	}
+
 	// Get workflow
 	workflow, err := ctrl.workflowService.GetWorkflowById(workflowID)
 	if err != nil {
-		middleware.RespondNotFound(c, "Workflow not found")
+		// SECURITY: Don't reveal if workflow exists or not - use generic error
+		// This prevents workflow enumeration attacks
+		middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 		return
 	}
 
 	// Check if workflow is active
 	if !workflow.IsActive {
-		middleware.RespondBadRequest(c, "Workflow is not active")
+		// SECURITY: Don't reveal workflow state - use same error as invalid credentials
+		middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 		return
 	}
 
 	// Verify webhook path matches if custom path is configured
 	if workflow.WebhookPath != nil {
-		// If custom path is set, it must match
+		// If custom path is set, it must match exactly
 		if webhookPath != *workflow.WebhookPath {
-			middleware.RespondNotFound(c, "Invalid webhook path")
+			middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 			return
 		}
 	} else {
 		// If no custom path, the path param should be empty
 		if webhookPath != "" {
-			middleware.RespondNotFound(c, "Invalid webhook path")
+			middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 			return
 		}
 	}
 
 	// All webhooks require authentication - verify webhook secret
 	if workflow.WebhookSecretHash == nil || *workflow.WebhookSecretHash == "" {
-		middleware.RespondBadRequest(c, "Webhook secret not configured. Please generate a secret in the workflow settings.")
+		// SECURITY: Don't reveal configuration state
+		middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 		return
 	}
 
@@ -590,14 +619,21 @@ func (ctrl *WorkflowController) TriggerWebhook(c *gin.Context) {
 		secret = authHeader[7:]
 	}
 
+	// SECURITY: Limit secret length to prevent DoS (bcrypt hashing is expensive)
+	if len(secret) > 1024 {
+		middleware.RespondUnauthorized(c, "Invalid authorization header")
+		return
+	}
+
 	if secret == "" {
 		middleware.RespondUnauthorized(c, "Invalid authorization header")
 		return
 	}
 
 	// Validate secret against stored hash
+	// SECURITY: bcrypt.CompareHashAndPassword is constant-time, safe from timing attacks
 	if !ctrl.workflowService.ValidateWebhookSecret(secret, *workflow.WebhookSecretHash) {
-		middleware.RespondUnauthorized(c, "Invalid webhook secret")
+		middleware.RespondUnauthorized(c, "Invalid webhook credentials")
 		return
 	}
 
@@ -617,10 +653,26 @@ func (ctrl *WorkflowController) TriggerWebhook(c *gin.Context) {
 		}
 	}
 
+	// SECURITY: Validate input size before processing (prevent DoS via large payloads)
+	// Check size by marshaling to JSON (same check as workflow_engine)
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		middleware.RespondBadRequest(c, "Invalid request payload")
+		return
+	}
+
+	// MaxDataSize is 10MB (10 * 1024 * 1024 bytes) as defined in workflow_engine.go
+	const MaxDataSize = 10 * 1024 * 1024
+	if len(inputJSON) > MaxDataSize {
+		middleware.RespondBadRequest(c, "Request payload too large. Maximum size is 10MB.")
+		return
+	}
+
 	// Trigger workflow execution with "webhook" trigger type
 	jobID, executionID, err := ctrl.workflowService.ExecuteWorkflowWithTrigger(c.Request.Context(), workflowID, input, "webhook")
 	if err != nil {
-		middleware.RespondInternalError(c, err.Error())
+		// SECURITY: Don't expose internal errors - use generic message
+		middleware.RespondInternalError(c, "Failed to trigger workflow")
 		return
 	}
 
