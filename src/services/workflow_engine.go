@@ -363,23 +363,31 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 		}
 	}
 
-	// Find start node
+	// Find trigger node(s) - workflow can start from any trigger node
+	// Priority: manual-start > webhook-trigger > cron-trigger > start (for backward compatibility)
 	var startNodeID string
-	for nodeID, node := range nodeMap {
-		nodeType, _ := node["type"].(string)
-		if nodeType == "start" {
-			startNodeID = nodeID
+	triggerNodeTypes := []string{"manual-start", "webhook-trigger", "cron-trigger", "start"}
+	
+	for _, triggerType := range triggerNodeTypes {
+		for nodeID, node := range nodeMap {
+			nodeType, _ := node["type"].(string)
+			if nodeType == triggerType {
+				startNodeID = nodeID
+				break
+			}
+		}
+		if startNodeID != "" {
 			break
 		}
 	}
 
 	if startNodeID == "" {
-		return fmt.Errorf("no start node found in workflow")
+		return fmt.Errorf("no trigger node found in workflow")
 	}
 
 	// Store node outputs for passing to next nodes
 	nodeOutputs := make(map[string]interface{})
-	nodeOutputs[startNodeID] = input // Start node output is the workflow input
+	nodeOutputs[startNodeID] = input // Trigger node output is the workflow input
 
 	// Execute workflow using BFS/topological traversal
 	queue := []string{startNodeID}
@@ -425,8 +433,11 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 		currentNode := nodeMap[currentNodeID]
 		nodeType, _ := currentNode["type"].(string)
 
-		// Skip start and end nodes for execution
-		if nodeType != "start" && nodeType != "end" {
+		// Skip trigger and finish nodes for execution
+		// Support old "start" and "end" for backward compatibility
+		isTriggerNode := nodeType == "manual-start" || nodeType == "webhook-trigger" || nodeType == "cron-trigger" || nodeType == "start"
+		isFinishNode := nodeType == "finish" || nodeType == "end"
+		if !isTriggerNode && !isFinishNode {
 			// Increment node execution counter
 			limits.nodesExecuted++
 			// Get node config
@@ -974,8 +985,11 @@ func (s *WorkflowEngineService) executeSubgraph(
 
 		nodeType, _ := node["type"].(string)
 
-		// Skip start and end nodes in subgraph
-		if nodeType == "start" || nodeType == "end" {
+		// Skip trigger and finish nodes in subgraph
+		// Support old "start" and "end" for backward compatibility
+		isTriggerNode := nodeType == "manual-start" || nodeType == "webhook-trigger" || nodeType == "cron-trigger" || nodeType == "start"
+		isFinishNode := nodeType == "finish" || nodeType == "end"
+		if isTriggerNode || isFinishNode {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)
@@ -1434,8 +1448,11 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 
 		nodeType, _ := node["type"].(string)
 
-		// Skip start and end nodes in subgraph
-		if nodeType == "start" || nodeType == "end" {
+		// Skip trigger and finish nodes in subgraph
+		// Support old "start" and "end" for backward compatibility
+		isTriggerNode := nodeType == "manual-start" || nodeType == "webhook-trigger" || nodeType == "cron-trigger" || nodeType == "start"
+		isFinishNode := nodeType == "finish" || nodeType == "end"
+		if isTriggerNode || isFinishNode {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)

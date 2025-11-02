@@ -36,7 +36,7 @@ func FindRunningExecutionsWithStats(db *gorm.DB) ([]ExecutionInfo, error) {
 			SUM(CASE WHEN wne.status = 'success' THEN 1 ELSE 0 END) as success_nodes,
 			SUM(CASE WHEN wne.status = 'running' THEN 1 ELSE 0 END) as running_nodes,
 			COUNT(DISTINCT CASE WHEN om.status IN ('pending', 'processing') THEN om.id END) as pending_messages,
-			BOOL_OR(wne.node_type = 'end' AND wne.status = 'success') as has_end_node
+			BOOL_OR((wne.node_type = 'finish' OR wne.node_type = 'end') AND wne.status = 'success') as has_end_node
 		FROM workflow_executions we
 		LEFT JOIN workflow_node_executions wne ON wne.execution_id = we.id
 		LEFT JOIN outbox_messages om ON om.node_execution_id = wne.id
