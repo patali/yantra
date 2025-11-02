@@ -16,8 +16,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/ses/types"
 	"github.com/mailgun/mailgun-go/v4"
-	"github.com/patali/yantra/src/executors"
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/db/repositories"
+	"github.com/patali/yantra/src/executors"
 	"github.com/resend/resend-go/v2"
 	"gorm.io/gorm"
 )
@@ -32,7 +33,8 @@ const (
 )
 
 type EmailService struct {
-	db *gorm.DB
+	db   *gorm.DB // Keep for backward compatibility
+	repo repositories.Repository
 
 	// Client caches for performance (thread-safe)
 	resendClients  sync.Map // map[apiKey]*resend.Client
@@ -41,7 +43,10 @@ type EmailService struct {
 }
 
 func NewEmailService(db *gorm.DB) *EmailService {
-	return &EmailService{db: db}
+	return &EmailService{
+		db:   db,
+		repo: repositories.NewRepository(db),
+	}
 }
 
 // getResendClient returns a cached Resend client or creates a new one
@@ -91,28 +96,25 @@ func (s *EmailService) getSESClient(ctx context.Context, region, accessKey, secr
 
 // GetActiveProvider retrieves the active email provider configuration for an account
 func (s *EmailService) GetActiveProvider(accountID string) (*models.EmailProviderSettings, error) {
-	var settings models.EmailProviderSettings
-	err := s.db.Where("account_id = ? AND is_active = ?", accountID, true).First(&settings).Error
+	ctx := context.Background()
+	settings, err := s.repo.EmailProvider().FindActiveByAccountID(ctx, accountID)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("no active email provider configured")
-		}
 		return nil, err
 	}
-	return &settings, nil
+	return settings, nil
 }
 
 // GetProviderByType retrieves a specific email provider configuration
 func (s *EmailService) GetProviderByType(accountID string, provider EmailProvider) (*models.EmailProviderSettings, error) {
-	var settings models.EmailProviderSettings
-	err := s.db.Where("account_id = ? AND provider = ?", accountID, string(provider)).First(&settings).Error
+	ctx := context.Background()
+	settings, err := s.repo.EmailProvider().FindByAccountIDAndProvider(ctx, accountID, string(provider))
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("provider %s not configured", provider)
-		}
 		return nil, err
 	}
-	return &settings, nil
+	if settings == nil {
+		return nil, fmt.Errorf("provider %s not configured", provider)
+	}
+	return settings, nil
 }
 
 // SendEmail sends an email using the configured provider

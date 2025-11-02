@@ -1,43 +1,44 @@
 package services
 
 import (
-	"github.com/patali/yantra/src/dto"
+	"context"
 	"fmt"
 
+	"github.com/patali/yantra/src/dto"
+
 	"github.com/patali/yantra/src/db/models"
-	"gorm.io/gorm"
+	"github.com/patali/yantra/src/db/repositories"
 )
 
 type AccountService struct {
-	db *gorm.DB
+	repo repositories.Repository
 }
 
-func NewAccountService(db *gorm.DB) *AccountService {
-	return &AccountService{db: db}
+func NewAccountService(repo repositories.Repository) *AccountService {
+	return &AccountService{repo: repo}
 }
-
 
 // CreateAccount creates a new account with the user as owner
 func (s *AccountService) CreateAccount(name, ownerUserID string) (*dto.AccountResponse, error) {
+	ctx := context.Background()
 	var account models.Account
-	var member models.AccountMember
 
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
 		// Create account
 		account = models.Account{
 			Name: name,
 		}
-		if err := tx.Create(&account).Error; err != nil {
+		if err := txRepo.Account().Create(ctx, &account); err != nil {
 			return err
 		}
 
 		// Add user as owner
-		member = models.AccountMember{
+		member := models.AccountMember{
 			AccountID: account.ID,
 			UserID:    ownerUserID,
 			Role:      "owner",
 		}
-		if err := tx.Create(&member).Error; err != nil {
+		if err := txRepo.AccountMember().Create(ctx, &member); err != nil {
 			return err
 		}
 
@@ -49,13 +50,15 @@ func (s *AccountService) CreateAccount(name, ownerUserID string) (*dto.AccountRe
 	}
 
 	// Load with relationships
-	s.db.Preload("Members").Preload("Members.User").First(&account, "id = ?", account.ID)
+	account2, _ := s.repo.Account().FindByID(ctx, account.ID)
 
-	return s.toAccountResponse(&account), nil
+	return s.toAccountResponse(account2), nil
 }
 
 // AddMember adds a user to an account
 func (s *AccountService) AddMember(accountID, userID, role string) error {
+	ctx := context.Background()
+
 	if role == "" {
 		role = "member"
 	}
@@ -66,21 +69,20 @@ func (s *AccountService) AddMember(accountID, userID, role string) error {
 	}
 
 	// Check if account exists
-	var account models.Account
-	if err := s.db.First(&account, "id = ?", accountID).Error; err != nil {
+	_, err := s.repo.Account().FindByID(ctx, accountID)
+	if err != nil {
 		return fmt.Errorf("account not found")
 	}
 
 	// Check if user exists
-	var user models.User
-	if err := s.db.First(&user, "id = ?", userID).Error; err != nil {
+	_, err = s.repo.User().FindByID(ctx, userID)
+	if err != nil {
 		return fmt.Errorf("user not found")
 	}
 
 	// Check if member already exists
-	var existingMember models.AccountMember
-	result := s.db.Where("account_id = ? AND user_id = ?", accountID, userID).First(&existingMember)
-	if result.Error == nil {
+	existingMember, _ := s.repo.AccountMember().FindByUserAndAccount(ctx, userID, accountID)
+	if existingMember != nil {
 		return fmt.Errorf("user is already a member of this account")
 	}
 
@@ -91,7 +93,7 @@ func (s *AccountService) AddMember(accountID, userID, role string) error {
 		Role:      role,
 	}
 
-	if err := s.db.Create(&member).Error; err != nil {
+	if err := s.repo.AccountMember().Create(ctx, &member); err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
 	}
 
@@ -100,28 +102,15 @@ func (s *AccountService) AddMember(accountID, userID, role string) error {
 
 // RemoveMember removes a user from an account
 func (s *AccountService) RemoveMember(accountID, userID string) error {
-	result := s.db.Where("account_id = ? AND user_id = ?", accountID, userID).Delete(&models.AccountMember{})
-	if result.Error != nil {
-		return fmt.Errorf("failed to remove member: %w", result.Error)
-	}
-
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("member not found")
-	}
-
-	return nil
+	ctx := context.Background()
+	return s.repo.AccountMember().Delete(ctx, accountID, userID)
 }
 
 // ListMyAccounts lists all accounts the user is a member of
 func (s *AccountService) ListMyAccounts(userID string) ([]dto.AccountResponse, error) {
-	var accounts []models.Account
+	ctx := context.Background()
 
-	err := s.db.Joins("JOIN account_members ON account_members.account_id = accounts.id").
-		Where("account_members.user_id = ?", userID).
-		Preload("Members").
-		Preload("Members.User").
-		Find(&accounts).Error
-
+	accounts, err := s.repo.Account().FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch accounts: %w", err)
 	}
@@ -136,58 +125,35 @@ func (s *AccountService) ListMyAccounts(userID string) ([]dto.AccountResponse, e
 
 // GetAccountByID retrieves an account by ID with all members
 func (s *AccountService) GetAccountByID(accountID string) (*dto.AccountResponse, error) {
-	var account models.Account
+	ctx := context.Background()
 
-	err := s.db.Preload("Members").Preload("Members.User").First(&account, "id = ?", accountID).Error
+	account, err := s.repo.Account().FindByID(ctx, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("account not found: %w", err)
+		return nil, err
 	}
 
-	return s.toAccountResponse(&account), nil
+	return s.toAccountResponse(account), nil
 }
 
 // UpdateAccount updates account details
 func (s *AccountService) UpdateAccount(accountID, name string) error {
-	result := s.db.Model(&models.Account{}).Where("id = ?", accountID).Update("name", name)
-	if result.Error != nil {
-		return fmt.Errorf("failed to update account: %w", result.Error)
+	ctx := context.Background()
+	updates := map[string]interface{}{
+		"name": name,
 	}
-
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("account not found")
-	}
-
-	return nil
+	return s.repo.Account().Update(ctx, accountID, updates)
 }
 
 // IsUserMemberOfAccount checks if a user is a member of an account
 func (s *AccountService) IsUserMemberOfAccount(userID, accountID string) (bool, error) {
-	var count int64
-	err := s.db.Model(&models.AccountMember{}).
-		Where("user_id = ? AND account_id = ?", userID, accountID).
-		Count(&count).Error
-
-	if err != nil {
-		return false, fmt.Errorf("failed to check membership: %w", err)
-	}
-
-	return count > 0, nil
+	ctx := context.Background()
+	return s.repo.AccountMember().IsUserMemberOfAccount(ctx, userID, accountID)
 }
 
 // GetUserRoleInAccount gets the user's role in an account (owner, admin, member)
 func (s *AccountService) GetUserRoleInAccount(userID, accountID string) (string, error) {
-	var member models.AccountMember
-	err := s.db.Where("user_id = ? AND account_id = ?", userID, accountID).
-		First(&member).Error
-
-	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return "", fmt.Errorf("user is not a member of this account")
-		}
-		return "", fmt.Errorf("failed to get user role: %w", err)
-	}
-
-	return member.Role, nil
+	ctx := context.Background()
+	return s.repo.AccountMember().GetUserRole(ctx, userID, accountID)
 }
 
 // Helper to convert model to response
@@ -199,8 +165,9 @@ func (s *AccountService) toAccountResponse(account *models.Account) *dto.Account
 	}
 
 	// Fetch members separately
-	var accountMembers []models.AccountMember
-	if err := s.db.Where("account_id = ?", account.ID).Find(&accountMembers).Error; err == nil && len(accountMembers) > 0 {
+	ctx := context.Background()
+	accountMembers, err := s.repo.AccountMember().FindByAccountID(ctx, account.ID)
+	if err == nil && len(accountMembers) > 0 {
 		members := make([]dto.MemberResponse, len(accountMembers))
 		for i, member := range accountMembers {
 			members[i] = dto.MemberResponse{
@@ -209,8 +176,8 @@ func (s *AccountService) toAccountResponse(account *models.Account) *dto.Account
 				JoinedAt: member.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			}
 			// Fetch user details separately
-			var user models.User
-			if err := s.db.Where("id = ?", member.UserID).First(&user).Error; err == nil {
+			user, err := s.repo.User().FindByID(ctx, member.UserID)
+			if err == nil {
 				members[i].User = dto.UserResponse{
 					ID:        user.ID,
 					Username:  user.Username,

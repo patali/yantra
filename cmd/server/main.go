@@ -13,6 +13,7 @@ import (
 	"github.com/patali/yantra/src/config"
 	"github.com/patali/yantra/src/controllers"
 	"github.com/patali/yantra/src/db"
+	"github.com/patali/yantra/src/db/repositories"
 	"github.com/patali/yantra/src/executors"
 	"github.com/patali/yantra/src/middleware"
 	riverinternal "github.com/patali/yantra/src/river"
@@ -47,6 +48,9 @@ func main() {
 		log.Fatalf("❌ Failed to run GORM migrations: %v", err)
 	}
 
+	// Initialize repository layer
+	repo := repositories.NewRepository(database.DB)
+
 	// Initialize email service (needed by workflow engine and outbox worker)
 	emailService := services.NewEmailService(database.DB)
 
@@ -65,13 +69,13 @@ func main() {
 	}
 	defer riverClient.Stop(ctx)
 
-	// Initialize services
+	// Initialize services with repository pattern
 	systemEmailService := services.NewSystemEmailService(cfg)
 	authService := services.NewAuthService(database.DB, cfg.JWTSecret, systemEmailService)
 	queueService := services.NewQueueService(riverClient.GetClient())
 	workflowService := services.NewWorkflowService(database.DB, queueService)
-	accountService := services.NewAccountService(database.DB)
-	userService := services.NewUserService(database.DB)
+	accountService := services.NewAccountService(repo)
+	userService := services.NewUserService(repo)
 
 	// Initialize and start scheduler service (using robfig/cron + River)
 	schedulerService := services.NewSchedulerService(database.DB, queueService)
@@ -90,7 +94,7 @@ func main() {
 	defer outboxWorker.Stop()
 
 	// Run cleanup routines on startup
-	cleanupService := services.NewCleanupService(database.DB)
+	cleanupService := services.NewCleanupService(repo)
 	if err := cleanupService.RunAllCleanups(ctx); err != nil {
 		log.Printf("⚠️  Warning: Cleanup routines encountered errors: %v", err)
 	}

@@ -6,17 +6,17 @@ import (
 	"log"
 	"time"
 
-	"github.com/patali/yantra/src/db/models"
-	"gorm.io/gorm"
+	"github.com/patali/yantra/src/db/queries"
+	"github.com/patali/yantra/src/db/repositories"
 )
 
 type CleanupService struct {
-	db *gorm.DB
+	repo repositories.Repository
 }
 
-func NewCleanupService(db *gorm.DB) *CleanupService {
+func NewCleanupService(repo repositories.Repository) *CleanupService {
 	return &CleanupService{
-		db: db,
+		repo: repo,
 	}
 }
 
@@ -28,42 +28,10 @@ func NewCleanupService(db *gorm.DB) *CleanupService {
 func (s *CleanupService) FixStuckExecutions(ctx context.Context) error {
 	log.Println("🧹 Starting cleanup: Checking for stuck workflow executions...")
 
-	type ExecutionInfo struct {
-		ExecutionID        string
-		WorkflowID         string
-		Version            int
-		TotalNodes         int64
-		FailedNodes        int64
-		SuccessNodes       int64
-		RunningNodes       int64 // Node executions stuck in "running" state
-		PendingMessages    int64
-		HasEndNode         bool // Whether an "end" node executed successfully
-		StartedAt          time.Time
-	}
-
-	// Find all running executions and their stats
+	// Find all running executions and their stats using query builder
 	// Check if they have a completed "end" node to determine if they're truly finished
 	// Also check for node executions stuck in "running" state (from crashes)
-	var executionInfos []ExecutionInfo
-	err := s.db.Raw(`
-		SELECT
-			we.id as execution_id,
-			we.workflow_id as workflow_id,
-			we.version as version,
-			we.started_at as started_at,
-			COUNT(DISTINCT wne.id) as total_nodes,
-			SUM(CASE WHEN wne.status = 'error' THEN 1 ELSE 0 END) as failed_nodes,
-			SUM(CASE WHEN wne.status = 'success' THEN 1 ELSE 0 END) as success_nodes,
-			SUM(CASE WHEN wne.status = 'running' THEN 1 ELSE 0 END) as running_nodes,
-			COUNT(DISTINCT CASE WHEN om.status IN ('pending', 'processing') THEN om.id END) as pending_messages,
-			BOOL_OR(wne.node_type = 'end' AND wne.status = 'success') as has_end_node
-		FROM workflow_executions we
-		LEFT JOIN workflow_node_executions wne ON wne.execution_id = we.id
-		LEFT JOIN outbox_messages om ON om.node_execution_id = wne.id
-		WHERE we.status = 'running'
-		GROUP BY we.id, we.workflow_id, we.version, we.started_at
-	`).Scan(&executionInfos).Error
-
+	executionInfos, err := queries.FindRunningExecutionsWithStats(s.repo.DB())
 	if err != nil {
 		return fmt.Errorf("failed to query execution stats: %w", err)
 	}
@@ -98,13 +66,11 @@ func (s *CleanupService) FixStuckExecutions(ctx context.Context) error {
 				info.ExecutionID[:8], info.RunningNodes)
 
 			// First, mark stuck node executions as error so they're completed
-			s.db.Model(&models.WorkflowNodeExecution{}).
-				Where("execution_id = ? AND status = ?", info.ExecutionID, "running").
-				Updates(map[string]interface{}{
-					"status":       "error",
-					"error":        "Node execution interrupted by server crash/restart - workflow can be resumed",
-					"completed_at": time.Now(),
-				})
+			s.repo.NodeExecution().UpdateByExecutionIDAndStatus(ctx, info.ExecutionID, "running", map[string]interface{}{
+				"status":       "error",
+				"error":        "Node execution interrupted by server crash/restart - workflow can be resumed",
+				"completed_at": time.Now(),
+			})
 
 			// Mark workflow as interrupted
 			newStatus = "interrupted"
@@ -163,10 +129,7 @@ func (s *CleanupService) FixStuckExecutions(ctx context.Context) error {
 				updates["error"] = errorMsg
 			}
 
-			err := s.db.Model(&models.WorkflowExecution{}).
-				Where("id = ?", info.ExecutionID).
-				Updates(updates).Error
-
+			err := s.repo.Execution().Update(ctx, info.ExecutionID, updates)
 			if err != nil {
 				log.Printf("  ❌ Failed to update execution %s: %v", info.ExecutionID[:8], err)
 				continue
@@ -192,12 +155,7 @@ func (s *CleanupService) FixOrphanedOutboxMessages(ctx context.Context) error {
 	log.Println("🧹 Starting cleanup: Checking for orphaned outbox messages...")
 
 	// Find messages with non-existent node executions
-	var orphanedCount int64
-	err := s.db.Model(&models.OutboxMessage{}).
-		Joins("LEFT JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
-		Where("workflow_node_executions.id IS NULL").
-		Count(&orphanedCount).Error
-
+	orphanedCount, err := s.repo.Outbox().CountOrphanedMessages(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to count orphaned messages: %w", err)
 	}
@@ -205,14 +163,10 @@ func (s *CleanupService) FixOrphanedOutboxMessages(ctx context.Context) error {
 	if orphanedCount > 0 {
 		log.Printf("⚠️  Found %d orphaned outbox messages, marking as dead_letter", orphanedCount)
 
-		err = s.db.Model(&models.OutboxMessage{}).
-			Joins("LEFT JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
-			Where("workflow_node_executions.id IS NULL AND outbox_messages.status NOT IN ?",
-				[]string{"dead_letter", "completed"}).
-			Updates(map[string]interface{}{
-				"status":     "dead_letter",
-				"last_error": "Node execution not found (orphaned message)",
-			}).Error
+		err = s.repo.Outbox().UpdateOrphanedMessages(ctx, map[string]interface{}{
+			"status":     "dead_letter",
+			"last_error": "Node execution not found (orphaned message)",
+		})
 
 		if err != nil {
 			return fmt.Errorf("failed to update orphaned messages: %w", err)

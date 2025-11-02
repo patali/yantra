@@ -1,28 +1,28 @@
 package services
 
 import (
-	"github.com/patali/yantra/src/dto"
+	"context"
 	"fmt"
 
-	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/dto"
+
+	"github.com/patali/yantra/src/db/repositories"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 type UserService struct {
-	db *gorm.DB
+	repo repositories.Repository
 }
 
-func NewUserService(db *gorm.DB) *UserService {
-	return &UserService{db: db}
+func NewUserService(repo repositories.Repository) *UserService {
+	return &UserService{repo: repo}
 }
-
 
 // GetUserById retrieves a user by ID
 func (s *UserService) GetUserById(id string) (*dto.UserResponse, error) {
-	var user models.User
-	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
-		return nil, fmt.Errorf("user not found: %w", err)
+	user, err := s.repo.User().FindByID(context.Background(), id)
+	if err != nil {
+		return nil, err
 	}
 
 	return &dto.UserResponse{
@@ -36,9 +36,11 @@ func (s *UserService) GetUserById(id string) (*dto.UserResponse, error) {
 
 // GetUserByIdInSameAccounts retrieves a user by ID only if they share an account with the current user
 func (s *UserService) GetUserByIdInSameAccounts(id, currentUserID string) (*dto.UserResponse, error) {
+	ctx := context.Background()
+
 	// Find accounts the current user belongs to
-	var currentUserMemberships []models.AccountMember
-	if err := s.db.Where("user_id = ?", currentUserID).Find(&currentUserMemberships).Error; err != nil {
+	currentUserMemberships, err := s.repo.AccountMember().FindByUserID(ctx, currentUserID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to fetch current user memberships: %w", err)
 	}
 
@@ -53,20 +55,24 @@ func (s *UserService) GetUserByIdInSameAccounts(id, currentUserID string) (*dto.
 	}
 
 	// Check if the target user is a member of any of these accounts
-	var targetUserMembership models.AccountMember
-	if err := s.db.Where("user_id = ? AND account_id IN ?", id, accountIDs).First(&targetUserMembership).Error; err != nil {
-		return nil, fmt.Errorf("user not found")
+	for _, accountID := range accountIDs {
+		isMember, err := s.repo.AccountMember().IsUserMemberOfAccount(ctx, id, accountID)
+		if err == nil && isMember {
+			// Get the user details
+			return s.GetUserById(id)
+		}
 	}
 
-	// Get the user details
-	return s.GetUserById(id)
+	return nil, fmt.Errorf("user not found")
 }
 
 // GetAllUsersForUser retrieves all users who share at least one account with the given user
 func (s *UserService) GetAllUsersForUser(userID string) ([]dto.UserResponse, error) {
+	ctx := context.Background()
+
 	// Find accounts the user belongs to
-	var memberships []models.AccountMember
-	if err := s.db.Where("user_id = ?", userID).Find(&memberships).Error; err != nil {
+	memberships, err := s.repo.AccountMember().FindByUserID(ctx, userID)
+	if err != nil {
 		return nil, fmt.Errorf("failed to fetch user memberships: %w", err)
 	}
 
@@ -81,13 +87,7 @@ func (s *UserService) GetAllUsersForUser(userID string) ([]dto.UserResponse, err
 	}
 
 	// Find all users who are members of any of these accounts
-	var users []models.User
-	err := s.db.Joins("JOIN account_members ON account_members.user_id = users.id").
-		Where("account_members.account_id IN ?", accountIDs).
-		Distinct("users.*").
-		Order("users.created_at DESC").
-		Find(&users).Error
-
+	users, err := s.repo.User().FindUsersInAccounts(ctx, accountIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch users: %w", err)
 	}
@@ -112,17 +112,22 @@ func (s *UserService) UpdateTheme(id, theme string) (*dto.UserResponse, error) {
 		return nil, fmt.Errorf("invalid theme: must be 'light' or 'dark'")
 	}
 
-	var user models.User
-	if err := s.db.First(&user, "id = ?", id).Error; err != nil {
-		return nil, fmt.Errorf("user not found: %w", err)
+	ctx := context.Background()
+	user, err := s.repo.User().FindByID(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := s.db.Model(&user).Update("theme", theme).Error; err != nil {
+	updates := map[string]interface{}{
+		"theme": theme,
+	}
+
+	if err := s.repo.User().Update(ctx, user, updates); err != nil {
 		return nil, fmt.Errorf("failed to update theme: %w", err)
 	}
 
 	// Reload user
-	s.db.First(&user, "id = ?", id)
+	user, _ = s.repo.User().FindByID(ctx, id)
 
 	return &dto.UserResponse{
 		ID:        user.ID,
@@ -140,16 +145,8 @@ func (s *UserService) DeleteUser(id, currentUserID string) error {
 		return fmt.Errorf("cannot delete your own account")
 	}
 
-	result := s.db.Delete(&models.User{}, "id = ?", id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete user: %w", result.Error)
-	}
-
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("user not found")
-	}
-
-	return nil
+	ctx := context.Background()
+	return s.repo.User().Delete(ctx, id)
 }
 
 // DeleteUserInSameAccounts deletes a user only if they share an account with the current user
@@ -159,9 +156,11 @@ func (s *UserService) DeleteUserInSameAccounts(id, currentUserID string) error {
 		return fmt.Errorf("cannot delete your own account")
 	}
 
+	ctx := context.Background()
+
 	// Find accounts the current user belongs to
-	var currentUserMemberships []models.AccountMember
-	if err := s.db.Where("user_id = ?", currentUserID).Find(&currentUserMemberships).Error; err != nil {
+	currentUserMemberships, err := s.repo.AccountMember().FindByUserID(ctx, currentUserID)
+	if err != nil {
 		return fmt.Errorf("failed to fetch current user memberships: %w", err)
 	}
 
@@ -176,30 +175,31 @@ func (s *UserService) DeleteUserInSameAccounts(id, currentUserID string) error {
 	}
 
 	// Check if the target user is a member of any of these accounts
-	var targetUserMembership models.AccountMember
-	if err := s.db.Where("user_id = ? AND account_id IN ?", id, accountIDs).First(&targetUserMembership).Error; err != nil {
+	isMember := false
+	for _, accountID := range accountIDs {
+		member, _ := s.repo.AccountMember().IsUserMemberOfAccount(ctx, id, accountID)
+		if member {
+			isMember = true
+			break
+		}
+	}
+
+	if !isMember {
 		return fmt.Errorf("user not found")
 	}
 
 	// Delete the user
-	result := s.db.Delete(&models.User{}, "id = ?", id)
-	if result.Error != nil {
-		return fmt.Errorf("failed to delete user: %w", result.Error)
-	}
-
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("user not found")
-	}
-
-	return nil
+	return s.repo.User().Delete(ctx, id)
 }
 
 // UpdatePassword updates a user's password after verifying the current password
 func (s *UserService) UpdatePassword(userID, currentPassword, newPassword string) error {
+	ctx := context.Background()
+
 	// Fetch user
-	var user models.User
-	if err := s.db.First(&user, "id = ?", userID).Error; err != nil {
-		return fmt.Errorf("user not found: %w", err)
+	user, err := s.repo.User().FindByID(ctx, userID)
+	if err != nil {
+		return err
 	}
 
 	// Verify current password
@@ -214,7 +214,11 @@ func (s *UserService) UpdatePassword(userID, currentPassword, newPassword string
 	}
 
 	// Update password
-	if err := s.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+	updates := map[string]interface{}{
+		"password": string(hashedPassword),
+	}
+
+	if err := s.repo.User().Update(ctx, user, updates); err != nil {
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 

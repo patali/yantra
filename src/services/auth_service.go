@@ -1,39 +1,43 @@
 package services
 
 import (
+	"context"
 	"crypto/rand"
-	"github.com/patali/yantra/src/dto"
 	"encoding/hex"
 	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/db/repositories"
+	"github.com/patali/yantra/src/dto"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type AuthService struct {
-	db               *gorm.DB
-	jwtSecret        string
-	systemEmailSvc   *SystemEmailService
+	repo           repositories.Repository
+	db             *gorm.DB // Keep for backward compatibility during migration
+	jwtSecret      string
+	systemEmailSvc *SystemEmailService
 }
 
 func NewAuthService(db *gorm.DB, jwtSecret string, systemEmailSvc *SystemEmailService) *AuthService {
 	return &AuthService{
+		repo:           repositories.NewRepository(db),
 		db:             db,
 		jwtSecret:      jwtSecret,
 		systemEmailSvc: systemEmailSvc,
 	}
 }
 
-
 // CreateUser creates a new user (for invitations)
 func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (*dto.UserResponse, error) {
+	ctx := context.Background()
+
 	// Check if user already exists
-	var existingUser models.User
-	result := s.db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser)
-	if result.Error == nil {
+	existingUser, _ := s.repo.User().FindByUsernameOrEmail(ctx, req.Username, req.Email)
+	if existingUser != nil {
 		return nil, fmt.Errorf("user with this username or email already exists")
 	}
 
@@ -53,12 +57,11 @@ func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (
 
 	// If createdBy is provided, get their account memberships to add the new user
 	if createdBy != nil {
-		var memberships []models.AccountMember
-		s.db.Where("user_id = ?", *createdBy).Find(&memberships)
+		memberships, _ := s.repo.AccountMember().FindByUserID(ctx, *createdBy)
 
 		// Create user with memberships in a transaction
-		err = s.db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(&user).Error; err != nil {
+		err = s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
+			if err := txRepo.User().Create(ctx, &user); err != nil {
 				return err
 			}
 
@@ -68,7 +71,7 @@ func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (
 					UserID:    user.ID,
 					Role:      "member",
 				}
-				if err := tx.Create(&membership).Error; err != nil {
+				if err := txRepo.AccountMember().Create(ctx, &membership); err != nil {
 					return err
 				}
 			}
@@ -80,7 +83,7 @@ func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 	} else {
-		if err := s.db.Create(&user).Error; err != nil {
+		if err := s.repo.User().Create(ctx, &user); err != nil {
 			return nil, fmt.Errorf("failed to create user: %w", err)
 		}
 	}
@@ -96,9 +99,11 @@ func (s *AuthService) CreateUser(req dto.CreateUserRequest, createdBy *string) (
 
 // Login authenticates a user and returns a JWT token
 func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, error) {
+	ctx := context.Background()
+
 	// Find user
-	var user models.User
-	if err := s.db.Where("username = ?", req.Username).First(&user).Error; err != nil {
+	user, err := s.repo.User().FindByUsername(ctx, req.Username)
+	if err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -108,11 +113,11 @@ func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, error) {
 	}
 
 	// Get user's primary account (first account they joined)
-	var membership models.AccountMember
-	if err := s.db.Where("user_id = ?", user.ID).First(&membership).Error; err != nil {
+	memberships, err := s.repo.AccountMember().FindByUserID(ctx, user.ID)
+	if err != nil || len(memberships) == 0 {
 		return nil, fmt.Errorf("user is not associated with any account")
 	}
-	accountID := membership.AccountID
+	accountID := memberships[0].AccountID
 
 	// Generate JWT token
 	token, err := s.generateToken(user.ID, accountID)
@@ -134,10 +139,11 @@ func (s *AuthService) Login(req dto.LoginRequest) (*dto.LoginResponse, error) {
 
 // SignupWithAccount creates a new user and account (for first-time signup)
 func (s *AuthService) SignupWithAccount(req dto.SignupWithAccountRequest) (*dto.LoginResponse, error) {
+	ctx := context.Background()
+
 	// Check if user already exists
-	var existingUser models.User
-	result := s.db.Where("username = ? OR email = ?", req.Username, req.Email).First(&existingUser)
-	if result.Error == nil {
+	existingUser, _ := s.repo.User().FindByUsernameOrEmail(ctx, req.Username, req.Email)
+	if existingUser != nil {
 		if existingUser.Username == req.Username {
 			return nil, fmt.Errorf("username is already taken")
 		}
@@ -154,14 +160,14 @@ func (s *AuthService) SignupWithAccount(req dto.SignupWithAccountRequest) (*dto.
 	var user models.User
 	var account models.Account
 
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	err = s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
 		// Create user
 		user = models.User{
 			Username: req.Username,
 			Email:    req.Email,
 			Password: string(hashedPassword),
 		}
-		if err := tx.Create(&user).Error; err != nil {
+		if err := txRepo.User().Create(ctx, &user); err != nil {
 			return err
 		}
 
@@ -169,7 +175,7 @@ func (s *AuthService) SignupWithAccount(req dto.SignupWithAccountRequest) (*dto.
 		account = models.Account{
 			Name: req.Name,
 		}
-		if err := tx.Create(&account).Error; err != nil {
+		if err := txRepo.Account().Create(ctx, &account); err != nil {
 			return err
 		}
 
@@ -179,7 +185,7 @@ func (s *AuthService) SignupWithAccount(req dto.SignupWithAccountRequest) (*dto.
 			UserID:    user.ID,
 			Role:      "owner",
 		}
-		if err := tx.Create(&membership).Error; err != nil {
+		if err := txRepo.AccountMember().Create(ctx, &membership); err != nil {
 			return err
 		}
 
@@ -254,9 +260,11 @@ func (s *AuthService) ValidateToken(tokenString string) (userID, accountID strin
 
 // RequestPasswordReset generates a password reset token and saves it to the database
 func (s *AuthService) RequestPasswordReset(email string) (*dto.PasswordResetResponse, error) {
+	ctx := context.Background()
+
 	// Find user by email
-	var user models.User
-	if err := s.db.Where("email = ?", email).First(&user).Error; err != nil {
+	user, err := s.repo.User().FindByEmail(ctx, email)
+	if err != nil {
 		// Return success even if user not found (security best practice)
 		return &dto.PasswordResetResponse{
 			Message: "If an account with that email exists, a password reset link has been sent",
@@ -281,10 +289,11 @@ func (s *AuthService) RequestPasswordReset(email string) (*dto.PasswordResetResp
 	tokenHashStr := string(hashedToken)
 
 	// Save hashed token and expiration to user
-	if err := s.db.Model(&user).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"reset_token_hash": tokenHashStr,
 		"reset_token_exp":  expiresAt,
-	}).Error; err != nil {
+	}
+	if err := s.repo.User().Update(ctx, user, updates); err != nil {
 		return nil, fmt.Errorf("failed to save reset token: %w", err)
 	}
 
@@ -317,10 +326,11 @@ func (s *AuthService) RequestPasswordReset(email string) (*dto.PasswordResetResp
 
 // ResetPassword resets a user's password using a valid reset token
 func (s *AuthService) ResetPassword(resetToken, newPassword string) error {
+	ctx := context.Background()
+
 	// Find all users with non-expired reset tokens
-	now := time.Now()
-	var users []models.User
-	if err := s.db.Where("reset_token_hash IS NOT NULL AND reset_token_exp > ?", now).Find(&users).Error; err != nil {
+	users, err := s.repo.User().FindWithResetToken(ctx)
+	if err != nil {
 		return fmt.Errorf("invalid or expired reset token")
 	}
 
@@ -344,11 +354,12 @@ func (s *AuthService) ResetPassword(resetToken, newPassword string) error {
 	}
 
 	// Update password and clear reset token fields
-	if err := s.db.Model(matchedUser).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"password":         string(hashedPassword),
 		"reset_token_hash": nil,
 		"reset_token_exp":  nil,
-	}).Error; err != nil {
+	}
+	if err := s.repo.User().Update(ctx, matchedUser, updates); err != nil {
 		return fmt.Errorf("failed to reset password: %w", err)
 	}
 
@@ -357,9 +368,11 @@ func (s *AuthService) ResetPassword(resetToken, newPassword string) error {
 
 // ChangePassword changes a user's password (requires current password verification)
 func (s *AuthService) ChangePassword(userID, currentPassword, newPassword string) error {
+	ctx := context.Background()
+
 	// Find the user
-	var user models.User
-	if err := s.db.First(&user, "id = ?", userID).Error; err != nil {
+	user, err := s.repo.User().FindByID(ctx, userID)
+	if err != nil {
 		return fmt.Errorf("user not found")
 	}
 
@@ -375,7 +388,10 @@ func (s *AuthService) ChangePassword(userID, currentPassword, newPassword string
 	}
 
 	// Update password
-	if err := s.db.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+	updates := map[string]interface{}{
+		"password": string(hashedPassword),
+	}
+	if err := s.repo.User().Update(ctx, user, updates); err != nil {
 		return fmt.Errorf("failed to update password: %w", err)
 	}
 

@@ -2,18 +2,20 @@ package services
 
 import (
 	"context"
-	"github.com/patali/yantra/src/dto"
 	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/db/repositories"
+	"github.com/patali/yantra/src/dto"
 	"gorm.io/gorm"
 )
 
 type WorkflowService struct {
-	db               *gorm.DB
+	db               *gorm.DB // Keep for backward compatibility
+	repo             repositories.Repository
 	queueService     *QueueService
 	schedulerService *SchedulerService
 }
@@ -21,6 +23,7 @@ type WorkflowService struct {
 func NewWorkflowService(db *gorm.DB, queueService *QueueService) *WorkflowService {
 	return &WorkflowService{
 		db:           db,
+		repo:         repositories.NewRepository(db),
 		queueService: queueService,
 	}
 }
@@ -30,14 +33,11 @@ func (s *WorkflowService) SetScheduler(scheduler *SchedulerService) {
 	s.schedulerService = scheduler
 }
 
-
 // GetAllWorkflows retrieves all workflows for an account
 func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowResponse, error) {
-	var workflows []models.Workflow
-	err := s.db.Where("account_id = ?", accountID).
-		Order("created_at DESC").
-		Find(&workflows).Error
+	ctx := context.Background()
 
+	workflows, err := s.repo.Workflow().FindByAccountID(ctx, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch workflows: %w", err)
 	}
@@ -45,9 +45,8 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowRespo
 	responses := make([]dto.WorkflowResponse, len(workflows))
 	for i, w := range workflows {
 		// Get creator details
-		var creator models.User
 		var creatorDetails *dto.WorkflowCreator
-		if err := s.db.Select("username", "email").First(&creator, "id = ?", w.CreatedBy).Error; err == nil {
+		if creator, err := s.repo.User().FindByID(ctx, w.CreatedBy); err == nil {
 			creatorDetails = &dto.WorkflowCreator{
 				Username: creator.Username,
 				Email:    creator.Email,
@@ -55,12 +54,10 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowRespo
 		}
 
 		// Count executions for this workflow
-		var executionCount int64
-		s.db.Model(&models.WorkflowExecution{}).Where("workflow_id = ?", w.ID).Count(&executionCount)
+		executionCount, _ := s.repo.Workflow().CountExecutions(ctx, w.ID)
 
 		// Count versions for this workflow
-		var versionCount int64
-		s.db.Model(&models.WorkflowVersion{}).Where("workflow_id = ?", w.ID).Count(&versionCount)
+		versionCount, _ := s.repo.WorkflowVersion().CountByWorkflowID(ctx, w.ID)
 
 		responses[i] = dto.WorkflowResponse{
 			ID:             w.ID,
@@ -86,23 +83,17 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowRespo
 
 // GetWorkflowById retrieves a workflow by ID
 func (s *WorkflowService) GetWorkflowById(id string) (*models.Workflow, error) {
-	var workflow models.Workflow
-	err := s.db.First(&workflow, "id = ?", id).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("workflow not found: %w", err)
-	}
-
-	return &workflow, nil
+	ctx := context.Background()
+	return s.repo.Workflow().FindByID(ctx, id)
 }
 
 // GetWorkflowByIdAndAccount returns a workflow by ID and account ID
 func (s *WorkflowService) GetWorkflowByIdAndAccount(id, accountID string) (*models.Workflow, error) {
-	var workflow models.Workflow
-	err := s.db.Where("id = ? AND account_id = ?", id, accountID).First(&workflow).Error
+	ctx := context.Background()
 
+	workflow, err := s.repo.Workflow().FindByIDAndAccount(ctx, id, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("workflow not found: %w", err)
+		return nil, err
 	}
 
 	// Load the versions for this workflow
@@ -112,11 +103,9 @@ func (s *WorkflowService) GetWorkflowByIdAndAccount(id, accountID string) (*mode
 	}
 
 	// Add versions to the workflow struct
-	// Note: This is a workaround since GORM relationships aren't defined in the model
-	// In a proper implementation, we'd define the relationship in the Workflow model
 	workflow.Versions = versions
 
-	return &workflow, nil
+	return workflow, nil
 }
 
 // CreateWorkflow creates a new workflow with optional scheduling
@@ -139,7 +128,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	var workflow models.Workflow
 
 	// Create workflow and version in a transaction
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	err = s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
 		// Create workflow
 		workflow = models.Workflow{
 			Name:           req.Name,
@@ -152,7 +141,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 			CreatedBy:      createdBy,
 		}
 
-		if err := tx.Create(&workflow).Error; err != nil {
+		if err := txRepo.Workflow().Create(ctx, &workflow); err != nil {
 			return err
 		}
 
@@ -164,7 +153,7 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 			ChangeLog:  stringPtr("Initial version"),
 		}
 
-		if err := tx.Create(&version).Error; err != nil {
+		if err := txRepo.WorkflowVersion().Create(ctx, &version); err != nil {
 			return err
 		}
 
@@ -196,10 +185,8 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 	}
 
 	// Get the latest version definition
-	var latestVersion models.WorkflowVersion
-	if err := s.db.Where("workflow_id = ?", id).
-		Order("version DESC").
-		First(&latestVersion).Error; err != nil {
+	latestVersion, err := s.repo.WorkflowVersion().FindLatestByWorkflowID(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get workflow version: %w", err)
 	}
 
@@ -218,7 +205,7 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 		Description: originalWorkflow.Description,
 		Definition:  definition,
 		IsActive:    boolPtr(false), // Start as inactive
-		Schedule:    nil,             // Don't copy schedule
+		Schedule:    nil,            // Don't copy schedule
 		Timezone:    &originalWorkflow.Timezone,
 	}
 
@@ -227,9 +214,12 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 
 // UpdateWorkflow updates a workflow
 func (s *WorkflowService) UpdateWorkflow(id string, req dto.UpdateWorkflowRequest) (*models.Workflow, error) {
-	var workflow models.Workflow
-	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
-		return nil, fmt.Errorf("workflow not found: %w", err)
+	ctx := context.Background()
+
+	// Check if workflow exists
+	_, err := s.repo.Workflow().FindByID(ctx, id)
+	if err != nil {
+		return nil, err
 	}
 
 	// Update fields
@@ -242,20 +232,21 @@ func (s *WorkflowService) UpdateWorkflow(id string, req dto.UpdateWorkflowReques
 		updates["definition"] = req.Definition
 	}
 
-	if err := s.db.Model(&workflow).Updates(updates).Error; err != nil {
+	if err := s.repo.Workflow().Update(ctx, id, updates); err != nil {
 		return nil, fmt.Errorf("failed to update workflow: %w", err)
 	}
 
-	// Reload
-	s.db.First(&workflow, "id = ?", id)
-	return &workflow, nil
+	// Reload workflow
+	return s.repo.Workflow().FindByID(ctx, id)
 }
 
 // UpdateWorkflowByAccount updates a workflow by ID and account ID
 func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.UpdateWorkflowRequest) (*models.Workflow, error) {
-	var workflow models.Workflow
-	if err := s.db.Where("id = ? AND account_id = ?", id, accountID).First(&workflow).Error; err != nil {
-		return nil, fmt.Errorf("workflow not found: %w", err)
+	ctx := context.Background()
+
+	workflow, err := s.repo.Workflow().FindByIDAndAccount(ctx, id, accountID)
+	if err != nil {
+		return nil, err
 	}
 
 	newVersion := workflow.CurrentVersion
@@ -280,7 +271,7 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 			ChangeLog:  &changeLog,
 		}
 
-		if err := s.db.Create(&version).Error; err != nil {
+		if err := s.repo.WorkflowVersion().Create(ctx, &version); err != nil {
 			return nil, fmt.Errorf("failed to create version: %w", err)
 		}
 	}
@@ -296,23 +287,19 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 		updates["description"] = *req.Description
 	}
 
-	if err := s.db.Model(&workflow).Updates(updates).Error; err != nil {
+	if err := s.repo.Workflow().Update(ctx, id, updates); err != nil {
 		return nil, fmt.Errorf("failed to update workflow: %w", err)
 	}
 
 	// Reload workflow
-	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
-		return nil, err
-	}
-
-	return &workflow, nil
+	return s.repo.Workflow().FindByID(ctx, id)
 }
 
 // UpdateSchedule updates the workflow schedule
 func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto.UpdateScheduleRequest) error {
-	var workflow models.Workflow
-	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
-		return fmt.Errorf("workflow not found: %w", err)
+	workflow, err := s.repo.Workflow().FindByID(ctx, id)
+	if err != nil {
+		return err
 	}
 
 	// Determine timezone (use provided or keep existing)
@@ -355,7 +342,7 @@ func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto
 		"is_active": isActive,
 	}
 
-	if err := s.db.Model(&workflow).Updates(updates).Error; err != nil {
+	if err := s.repo.Workflow().Update(ctx, id, updates); err != nil {
 		return fmt.Errorf("failed to update schedule: %w", err)
 	}
 
@@ -383,9 +370,9 @@ func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto
 
 // DeleteWorkflow deletes a workflow and unschedules it
 func (s *WorkflowService) DeleteWorkflow(ctx context.Context, id string) error {
-	var workflow models.Workflow
-	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
-		return fmt.Errorf("workflow not found: %w", err)
+	workflow, err := s.repo.Workflow().FindByID(ctx, id)
+	if err != nil {
+		return err
 	}
 
 	// Remove from scheduler if scheduled
@@ -394,18 +381,14 @@ func (s *WorkflowService) DeleteWorkflow(ctx context.Context, id string) error {
 	}
 
 	// Delete workflow (cascade will handle related records)
-	if err := s.db.Delete(&workflow).Error; err != nil {
-		return fmt.Errorf("failed to delete workflow: %w", err)
-	}
-
-	return nil
+	return s.repo.Workflow().Delete(ctx, id)
 }
 
 // DeleteWorkflowByAccount deletes a workflow by ID and account ID
 func (s *WorkflowService) DeleteWorkflowByAccount(ctx context.Context, id, accountID string) error {
-	var workflow models.Workflow
-	if err := s.db.Where("id = ? AND account_id = ?", id, accountID).First(&workflow).Error; err != nil {
-		return fmt.Errorf("workflow not found: %w", err)
+	workflow, err := s.repo.Workflow().FindByIDAndAccount(ctx, id, accountID)
+	if err != nil {
+		return err
 	}
 
 	// Unschedule if scheduled
@@ -414,26 +397,21 @@ func (s *WorkflowService) DeleteWorkflowByAccount(ctx context.Context, id, accou
 	}
 
 	// Delete workflow (cascade will delete versions, executions, etc.)
-	if err := s.db.Delete(&workflow).Error; err != nil {
-		return fmt.Errorf("failed to delete workflow: %w", err)
-	}
-
-	return nil
+	return s.repo.Workflow().Delete(ctx, id)
 }
 
 // ExecuteWorkflow queues a workflow for execution
 func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input map[string]interface{}) (jobID string, executionID string, err error) {
-	// Check if workflow exists and get latest version
-	var workflow models.Workflow
-	if err := s.db.First(&workflow, "id = ?", id).Error; err != nil {
-		return "", "", fmt.Errorf("workflow not found: %w", err)
+	// Check if workflow exists
+	_, err = s.repo.Workflow().FindByID(ctx, id)
+	if err != nil {
+		return "", "", err
 	}
 
-	var latestVersion models.WorkflowVersion
-	if err := s.db.Where("workflow_id = ?", id).
-		Order("version DESC").
-		First(&latestVersion).Error; err != nil {
-		return "", "", fmt.Errorf("no version found for workflow: %w", err)
+	// Get latest version
+	latestVersion, err := s.repo.WorkflowVersion().FindLatestByWorkflowID(ctx, id)
+	if err != nil {
+		return "", "", err
 	}
 
 	// Create execution record first
@@ -450,7 +428,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 		execution.Input = &inputStr
 	}
 
-	if err := s.db.Create(&execution).Error; err != nil {
+	if err := s.repo.Execution().Create(ctx, &execution); err != nil {
 		return "", "", fmt.Errorf("failed to create execution record: %w", err)
 	}
 
@@ -458,7 +436,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 	jobID, err = s.queueService.QueueWorkflowExecution(ctx, id, execution.ID, input, "manual")
 	if err != nil {
 		// Rollback: mark execution as failed
-		s.db.Model(&execution).Updates(map[string]interface{}{
+		s.repo.Execution().Update(ctx, execution.ID, map[string]interface{}{
 			"status": "error",
 			"error":  "Failed to queue for execution",
 		})
@@ -471,9 +449,9 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 // ResumeWorkflow resumes a failed or interrupted workflow execution from checkpoint
 func (s *WorkflowService) ResumeWorkflow(ctx context.Context, executionID string) (jobID string, err error) {
 	// Get the execution record
-	var execution models.WorkflowExecution
-	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
-		return "", fmt.Errorf("execution not found: %w", err)
+	execution, err := s.repo.Execution().FindByID(ctx, executionID)
+	if err != nil {
+		return "", err
 	}
 
 	// Verify execution can be resumed (must be in error, running, or interrupted state)
@@ -482,9 +460,9 @@ func (s *WorkflowService) ResumeWorkflow(ctx context.Context, executionID string
 	}
 
 	// Get the workflow
-	var workflow models.Workflow
-	if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
-		return "", fmt.Errorf("workflow not found: %w", err)
+	_, err = s.repo.Workflow().FindByID(ctx, execution.WorkflowID)
+	if err != nil {
+		return "", err
 	}
 
 	// Parse input from original execution
@@ -508,46 +486,28 @@ func (s *WorkflowService) ResumeWorkflow(ctx context.Context, executionID string
 
 // GetVersionHistory retrieves version history for a workflow
 func (s *WorkflowService) GetVersionHistory(id string) ([]models.WorkflowVersion, error) {
-	var versions []models.WorkflowVersion
-	err := s.db.Where("workflow_id = ?", id).
-		Order("version DESC").
-		Find(&versions).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch versions: %w", err)
-	}
-
-	return versions, nil
+	ctx := context.Background()
+	return s.repo.WorkflowVersion().FindByWorkflowID(ctx, id)
 }
 
 // GetWorkflowExecutions returns all executions for a workflow
 func (s *WorkflowService) GetWorkflowExecutions(id string) ([]models.WorkflowExecution, error) {
-	var executions []models.WorkflowExecution
-	err := s.db.Where("workflow_id = ?", id).
-		Order("started_at DESC").
-		Find(&executions).Error
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch executions: %w", err)
-	}
-
-	return executions, nil
+	ctx := context.Background()
+	return s.repo.Execution().FindByWorkflowID(ctx, id)
 }
 
 // GetWorkflowExecutionById returns a specific execution with node executions
 func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*dto.ExecutionResponse, error) {
-	var execution models.WorkflowExecution
-	err := s.db.Where("id = ?", executionId).First(&execution).Error
+	ctx := context.Background()
+
+	execution, err := s.repo.Execution().FindByID(ctx, executionId)
 	if err != nil {
-		return nil, fmt.Errorf("execution not found: %w", err)
+		return nil, err
 	}
 
 	// Get all node executions (including retries/failures)
 	// Ordered by started_at DESC so most recent attempts appear first
-	var nodeExecutions []models.WorkflowNodeExecution
-	s.db.Where("execution_id = ?", executionId).
-		Order("started_at DESC").
-		Find(&nodeExecutions)
+	nodeExecutions, _ := s.repo.NodeExecution().FindByExecutionID(ctx, executionId)
 
 	// Convert node executions to response format
 	nodeExecResponses := make([]dto.NodeExecutionResponse, len(nodeExecutions))
@@ -587,17 +547,11 @@ func (s *WorkflowService) GetWorkflowExecutionById(executionId string) (*dto.Exe
 
 // GetAllWorkflowExecutions returns all workflow executions with optional filtering
 func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]dto.ExecutionResponse, error) {
-	var executions []models.WorkflowExecution
-	query := s.db.Order("started_at DESC").Limit(limit)
+	ctx := context.Background()
 
-	// Apply status filter if provided
-	if status != "" && status != "all" {
-		query = query.Where("status = ?", status)
-	}
-
-	err := query.Find(&executions).Error
+	executions, err := s.repo.Execution().FindAll(ctx, limit, status)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch executions: %w", err)
+		return nil, err
 	}
 
 	return s.convertExecutionsToResponses(executions), nil
@@ -605,14 +559,11 @@ func (s *WorkflowService) GetAllWorkflowExecutions(limit int, status string) ([]
 
 // GetFailedWorkflowExecutions returns all failed and partially failed workflow executions
 func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]dto.ExecutionResponse, error) {
-	var executions []models.WorkflowExecution
-	err := s.db.Where("status IN ?", []string{"error", "partially_failed"}).
-		Order("started_at DESC").
-		Limit(limit).
-		Find(&executions).Error
+	ctx := context.Background()
 
+	executions, err := s.repo.Execution().FindFailed(ctx, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch failed executions: %w", err)
+		return nil, err
 	}
 
 	return s.convertExecutionsToResponses(executions), nil
@@ -622,24 +573,11 @@ func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]dto.Executio
 
 // GetAllWorkflowExecutionsByAccount returns all executions filtered by account ID
 func (s *WorkflowService) GetAllWorkflowExecutionsByAccount(accountID string, limit int, status string) ([]dto.ExecutionResponse, error) {
-	var executions []models.WorkflowExecution
+	ctx := context.Background()
 
-	// Join with workflows table to filter by account
-	query := s.db.Table("workflow_executions").
-		Select("workflow_executions.*").
-		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
-		Where("workflows.account_id = ?", accountID).
-		Order("workflow_executions.started_at DESC").
-		Limit(limit)
-
-	// Apply status filter if provided
-	if status != "" && status != "all" {
-		query = query.Where("workflow_executions.status = ?", status)
-	}
-
-	err := query.Find(&executions).Error
+	executions, err := s.repo.Execution().FindAllByAccountID(ctx, accountID, limit, status)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch executions: %w", err)
+		return nil, err
 	}
 
 	return s.convertExecutionsToResponses(executions), nil
@@ -647,20 +585,11 @@ func (s *WorkflowService) GetAllWorkflowExecutionsByAccount(accountID string, li
 
 // GetFailedWorkflowExecutionsByAccount returns failed executions filtered by account ID
 func (s *WorkflowService) GetFailedWorkflowExecutionsByAccount(accountID string, limit int) ([]dto.ExecutionResponse, error) {
-	var executions []models.WorkflowExecution
+	ctx := context.Background()
 
-	// Join with workflows table to filter by account
-	err := s.db.Table("workflow_executions").
-		Select("workflow_executions.*").
-		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
-		Where("workflows.account_id = ?", accountID).
-		Where("workflow_executions.status IN ?", []string{"error", "partially_failed"}).
-		Order("workflow_executions.started_at DESC").
-		Limit(limit).
-		Find(&executions).Error
-
+	executions, err := s.repo.Execution().FindFailedByAccountID(ctx, accountID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch failed executions: %w", err)
+		return nil, err
 	}
 
 	return s.convertExecutionsToResponses(executions), nil
@@ -668,13 +597,12 @@ func (s *WorkflowService) GetFailedWorkflowExecutionsByAccount(accountID string,
 
 // convertExecutionsToResponses converts execution models to response DTOs
 func (s *WorkflowService) convertExecutionsToResponses(executions []models.WorkflowExecution) []dto.ExecutionResponse {
+	ctx := context.Background()
+
 	responses := make([]dto.ExecutionResponse, len(executions))
 	for i, exec := range executions {
 		// Get node executions
-		var nodeExecutions []models.WorkflowNodeExecution
-		s.db.Where("execution_id = ?", exec.ID).
-			Order("started_at DESC").
-			Find(&nodeExecutions)
+		nodeExecutions, _ := s.repo.NodeExecution().FindByExecutionID(ctx, exec.ID)
 
 		// Convert node executions
 		nodeExecResponses := make([]dto.NodeExecutionResponse, len(nodeExecutions))
@@ -694,9 +622,8 @@ func (s *WorkflowService) convertExecutionsToResponses(executions []models.Workf
 		}
 
 		// Get workflow details
-		var workflow models.Workflow
 		var workflowResp *dto.WorkflowResponse
-		if err := s.db.First(&workflow, "id = ?", exec.WorkflowID).Error; err == nil {
+		if workflow, err := s.repo.Workflow().FindByID(ctx, exec.WorkflowID); err == nil {
 			workflowResp = &dto.WorkflowResponse{
 				ID:   workflow.ID,
 				Name: workflow.Name,
@@ -724,9 +651,11 @@ func (s *WorkflowService) convertExecutionsToResponses(executions []models.Workf
 
 // CancelWorkflowExecution cancels a running or queued workflow execution
 func (s *WorkflowService) CancelWorkflowExecution(executionID string) error {
-	var execution models.WorkflowExecution
-	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
-		return fmt.Errorf("execution not found: %w", err)
+	ctx := context.Background()
+
+	execution, err := s.repo.Execution().FindByID(ctx, executionID)
+	if err != nil {
+		return err
 	}
 
 	// Only running or queued executions can be cancelled
@@ -736,35 +665,27 @@ func (s *WorkflowService) CancelWorkflowExecution(executionID string) error {
 
 	// Update execution status to cancelled
 	now := time.Now()
-	return s.db.Model(&execution).Updates(map[string]interface{}{
+	return s.repo.Execution().Update(ctx, executionID, map[string]interface{}{
 		"status":       "cancelled",
 		"completed_at": now,
 		"error":        "Execution cancelled by user",
-	}).Error
+	})
 }
 
 // RestoreWorkflowVersion restores a workflow to a previous version
 func (s *WorkflowService) RestoreWorkflowVersion(id string, version int) error {
-	// Get the version
-	var workflowVersion models.WorkflowVersion
-	err := s.db.Where("workflow_id = ? AND version = ?", id, version).
-		First(&workflowVersion).Error
+	ctx := context.Background()
+
+	// Get the version to ensure it exists
+	_, err := s.repo.WorkflowVersion().FindByWorkflowIDAndVersion(ctx, id, version)
 	if err != nil {
-		return fmt.Errorf("version not found: %w", err)
+		return err
 	}
 
-	// Update the workflow with the version's definition
-	err = s.db.Model(&models.Workflow{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"current_version": version,
-		}).Error
-
-	if err != nil {
-		return fmt.Errorf("failed to restore version: %w", err)
-	}
-
-	return nil
+	// Update the workflow with the version
+	return s.repo.Workflow().Update(ctx, id, map[string]interface{}{
+		"current_version": version,
+	})
 }
 
 // Helper function
