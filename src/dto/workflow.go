@@ -4,20 +4,26 @@ import "time"
 
 // CreateWorkflowRequest represents the request to create a workflow
 type CreateWorkflowRequest struct {
-	Name        string                 `json:"name" binding:"required"`
-	Description *string                `json:"description"`
-	Definition  map[string]interface{} `json:"definition" binding:"required"`
-	Schedule    *string                `json:"schedule"`
-	Timezone    *string                `json:"timezone"`
-	IsActive    *bool                  `json:"is_active"`
+	Name                string                 `json:"name" binding:"required"`
+	Description         *string                `json:"description"`
+	Definition          map[string]interface{} `json:"definition" binding:"required"`
+	Schedule            *string                `json:"schedule"`
+	Timezone            *string                `json:"timezone"`
+	WebhookPath         *string                `json:"webhookPath"`
+	WebhookRequireAuth  *bool                  `json:"webhookRequireAuth"`
+	IsActive            *bool                  `json:"is_active"`
 }
 
 // UpdateWorkflowRequest represents the request to update a workflow
 type UpdateWorkflowRequest struct {
-	Name        *string                `json:"name"`
-	Description *string                `json:"description"`
-	Definition  map[string]interface{} `json:"definition"`
-	ChangeLog   *string                `json:"change_log"`
+	Name               *string                `json:"name"`
+	Description        *string                `json:"description"`
+	Definition         map[string]interface{} `json:"definition"`
+	ChangeLog          *string                `json:"change_log"`
+	Schedule           *string                `json:"schedule"`
+	Timezone           *string                `json:"timezone"`
+	WebhookPath        *string                `json:"webhookPath"`
+	WebhookRequireAuth *bool                  `json:"webhookRequireAuth"`
 }
 
 // UpdateScheduleRequest represents the request to update workflow schedule
@@ -49,10 +55,12 @@ type WorkflowResponse struct {
 	ID             string           `json:"id"`
 	Name           string           `json:"name"`
 	Description    *string          `json:"description,omitempty"`
-	IsActive       bool             `json:"isActive"`
-	Schedule       *string          `json:"schedule,omitempty"`
-	Timezone       string           `json:"timezone"`
-	CurrentVersion int              `json:"currentVersion"`
+	IsActive            bool             `json:"isActive"`
+	Schedule            *string          `json:"schedule,omitempty"`
+	Timezone            string           `json:"timezone"`
+	WebhookPath         *string          `json:"webhookPath,omitempty"`
+	WebhookRequireAuth  bool             `json:"webhookRequireAuth"`
+	CurrentVersion      int              `json:"currentVersion"`
 	CreatedBy      string           `json:"createdBy"` // Creator user ID
 	Creator        *WorkflowCreator `json:"creator"`   // Creator details
 	Count          *WorkflowCount   `json:"_count"`    // Counts

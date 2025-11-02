@@ -11,10 +11,13 @@ type Workflow struct {
 	ID             string            `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	Name           string            `gorm:"not null" json:"name"`
 	Description    *string           `json:"description,omitempty"`
-	IsActive       bool              `gorm:"default:true" json:"isActive"`
-	Schedule       *string           `json:"schedule,omitempty"` // Cron expression
-	Timezone       string            `gorm:"default:UTC" json:"timezone"`
-	CurrentVersion int               `gorm:"default:1" json:"currentVersion"`
+	IsActive            bool              `gorm:"default:true" json:"isActive"`
+	Schedule            *string           `json:"schedule,omitempty"` // Cron expression
+	Timezone            string            `gorm:"default:UTC" json:"timezone"`
+	WebhookPath         *string           `json:"webhookPath,omitempty"`         // Custom webhook path segment
+	WebhookRequireAuth  bool              `gorm:"default:false" json:"webhookRequireAuth"` // Whether webhook requires auth
+	WebhookSecretHash   *string           `gorm:"index" json:"-"`                // Hashed webhook secret (never expose in JSON)
+	CurrentVersion      int               `gorm:"default:1" json:"currentVersion"`
 	AccountID      *string           `gorm:"type:uuid" json:"accountId,omitempty"`
 	CreatedBy      string            `gorm:"type:uuid;not null" json:"createdBy"`
 	CreatedAt      time.Time         `gorm:"autoCreateTime" json:"createdAt"`

@@ -42,6 +42,16 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 		workflows.POST("/:id/versions/restore", ctrl.RestoreVersion)                       // Frontend endpoint
 		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                           // Frontend endpoint
 	}
+
+	// Webhook routes (public, no auth middleware)
+	webhooks := rg.Group("/webhooks")
+	{
+		webhooks.POST("/:workflowId", ctrl.TriggerWebhook)       // Default webhook endpoint
+		webhooks.POST("/:workflowId/:path", ctrl.TriggerWebhook) // Custom path webhook endpoint
+	}
+
+	// Webhook secret management (requires auth)
+	workflows.POST("/:id/webhook-secret/regenerate", ctrl.RegenerateWebhookSecret)
 }
 
 // GetAllWorkflows returns all workflows for the current account
@@ -522,4 +532,127 @@ func getRetryableNodes(nodeExecutions []dto.NodeExecutionResponse) []string {
 	}
 
 	return retryableNodes
+}
+
+// TriggerWebhook handles webhook requests to trigger workflows
+// POST /api/webhooks/:workflowId or POST /api/webhooks/:workflowId/:path
+func (ctrl *WorkflowController) TriggerWebhook(c *gin.Context) {
+	workflowID := c.Param("workflowId")
+	webhookPath := c.Param("path")
+
+	// Get workflow
+	workflow, err := ctrl.workflowService.GetWorkflowById(workflowID)
+	if err != nil {
+		middleware.RespondNotFound(c, "Workflow not found")
+		return
+	}
+
+	// Check if workflow is active
+	if !workflow.IsActive {
+		middleware.RespondBadRequest(c, "Workflow is not active")
+		return
+	}
+
+	// Verify webhook path matches if custom path is configured
+	if workflow.WebhookPath != nil {
+		// If custom path is set, it must match
+		if webhookPath != *workflow.WebhookPath {
+			middleware.RespondNotFound(c, "Invalid webhook path")
+			return
+		}
+	} else {
+		// If no custom path, the path param should be empty
+		if webhookPath != "" {
+			middleware.RespondNotFound(c, "Invalid webhook path")
+			return
+		}
+	}
+
+	// All webhooks require authentication - verify webhook secret
+	if workflow.WebhookSecretHash == nil || *workflow.WebhookSecretHash == "" {
+		middleware.RespondBadRequest(c, "Webhook secret not configured. Please generate a secret in the workflow settings.")
+		return
+	}
+
+	// Get secret from Authorization header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		middleware.RespondUnauthorized(c, "Authorization header required")
+		return
+	}
+
+	// Extract secret (supports both "Bearer <secret>" and plain secret)
+	secret := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		secret = authHeader[7:]
+	}
+
+	if secret == "" {
+		middleware.RespondUnauthorized(c, "Invalid authorization header")
+		return
+	}
+
+	// Validate secret against stored hash
+	if !ctrl.workflowService.ValidateWebhookSecret(secret, *workflow.WebhookSecretHash) {
+		middleware.RespondUnauthorized(c, "Invalid webhook secret")
+		return
+	}
+
+	// Parse request body as workflow input
+	var input map[string]interface{}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		// If no JSON body, use empty input
+		input = make(map[string]interface{})
+	}
+
+	// Also try to get raw body for cases where content-type might not be JSON
+	if len(input) == 0 {
+		var rawBody interface{}
+		if err := c.ShouldBindBodyWith(&rawBody, nil); err == nil {
+			input = make(map[string]interface{})
+			input["body"] = rawBody
+		}
+	}
+
+	// Trigger workflow execution with "webhook" trigger type
+	jobID, executionID, err := ctrl.workflowService.ExecuteWorkflowWithTrigger(c.Request.Context(), workflowID, input, "webhook")
+	if err != nil {
+		middleware.RespondInternalError(c, err.Error())
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusAccepted, gin.H{
+		"job_id":       jobID,
+		"execution_id": executionID,
+		"message":      "Workflow execution queued",
+	})
+}
+
+// RegenerateWebhookSecret generates a new webhook secret for a workflow
+// POST /api/workflows/:id/webhook-secret/regenerate
+func (ctrl *WorkflowController) RegenerateWebhookSecret(c *gin.Context) {
+	id := c.Param("id")
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
+
+	// Verify workflow belongs to account
+	_, err = ctrl.workflowService.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		middleware.RespondNotFound(c, "Workflow not found")
+		return
+	}
+
+	// Generate new secret
+	plainSecret, err := ctrl.workflowService.RegenerateWebhookSecret(c.Request.Context(), id)
+	if err != nil {
+		middleware.RespondInternalError(c, err.Error())
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusOK, gin.H{
+		"secret":  plainSecret,
+		"message": "Webhook secret regenerated. Save this secret securely - it cannot be retrieved again.",
+	})
 }

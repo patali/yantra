@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/db/repositories"
 	"github.com/patali/yantra/src/dto"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -60,15 +63,17 @@ func (s *WorkflowService) GetAllWorkflows(accountID string) ([]dto.WorkflowRespo
 		versionCount, _ := s.repo.WorkflowVersion().CountByWorkflowID(ctx, w.ID)
 
 		responses[i] = dto.WorkflowResponse{
-			ID:             w.ID,
-			Name:           w.Name,
-			Description:    w.Description,
-			IsActive:       w.IsActive,
-			Schedule:       w.Schedule,
-			Timezone:       w.Timezone,
-			CurrentVersion: w.CurrentVersion,
-			CreatedBy:      w.CreatedBy,
-			Creator:        creatorDetails,
+			ID:                w.ID,
+			Name:              w.Name,
+			Description:       w.Description,
+			IsActive:          w.IsActive,
+			Schedule:          w.Schedule,
+			Timezone:          w.Timezone,
+			WebhookPath:       w.WebhookPath,
+			WebhookRequireAuth: w.WebhookRequireAuth,
+			CurrentVersion:    w.CurrentVersion,
+			CreatedBy:         w.CreatedBy,
+			Creator:           creatorDetails,
 			Count: &dto.WorkflowCount{
 				Executions: int(executionCount),
 				Versions:   int(versionCount),
@@ -131,14 +136,16 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	err = s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
 		// Create workflow
 		workflow = models.Workflow{
-			Name:           req.Name,
-			Description:    req.Description,
-			IsActive:       isActive,
-			Schedule:       req.Schedule,
-			Timezone:       timezone,
-			CurrentVersion: 1,
-			AccountID:      &accountID,
-			CreatedBy:      createdBy,
+			Name:               req.Name,
+			Description:        req.Description,
+			IsActive:           isActive,
+			Schedule:           req.Schedule,
+			Timezone:           timezone,
+			WebhookPath:        req.WebhookPath,
+			WebhookRequireAuth: req.WebhookRequireAuth != nil && *req.WebhookRequireAuth,
+			CurrentVersion:     1,
+			AccountID:          &accountID,
+			CreatedBy:          createdBy,
 		}
 
 		if err := txRepo.Workflow().Create(ctx, &workflow); err != nil {
@@ -286,9 +293,34 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 	if req.Description != nil {
 		updates["description"] = *req.Description
 	}
+	if req.Schedule != nil {
+		updates["schedule"] = req.Schedule
+	}
+	if req.Timezone != nil {
+		updates["timezone"] = *req.Timezone
+	}
+	if req.WebhookPath != nil {
+		updates["webhook_path"] = req.WebhookPath
+	}
+	if req.WebhookRequireAuth != nil {
+		updates["webhook_require_auth"] = *req.WebhookRequireAuth
+	}
 
 	if err := s.repo.Workflow().Update(ctx, id, updates); err != nil {
 		return nil, fmt.Errorf("failed to update workflow: %w", err)
+	}
+
+	// Update scheduler if schedule changed
+	if req.Schedule != nil && s.schedulerService != nil {
+		workflow, _ := s.repo.Workflow().FindByID(ctx, id)
+		if workflow != nil && workflow.IsActive && req.Schedule != nil && *req.Schedule != "" {
+			if err := s.schedulerService.AddSchedule(id, *req.Schedule, workflow.Timezone); err != nil {
+				log.Printf("⚠️  Failed to update schedule for workflow %s: %v\n", id, err)
+			}
+		} else if workflow != nil && (!workflow.IsActive || (req.Schedule != nil && *req.Schedule == "")) {
+			// Remove schedule if workflow is inactive or schedule is cleared
+			s.schedulerService.RemoveSchedule(id)
+		}
 	}
 
 	// Reload workflow
@@ -402,6 +434,11 @@ func (s *WorkflowService) DeleteWorkflowByAccount(ctx context.Context, id, accou
 
 // ExecuteWorkflow queues a workflow for execution
 func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input map[string]interface{}) (jobID string, executionID string, err error) {
+	return s.ExecuteWorkflowWithTrigger(ctx, id, input, "manual")
+}
+
+// ExecuteWorkflowWithTrigger queues a workflow for execution with a specific trigger type
+func (s *WorkflowService) ExecuteWorkflowWithTrigger(ctx context.Context, id string, input map[string]interface{}, triggerType string) (jobID string, executionID string, err error) {
 	// Check if workflow exists
 	_, err = s.repo.Workflow().FindByID(ctx, id)
 	if err != nil {
@@ -422,7 +459,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 		WorkflowID:  id,
 		Version:     latestVersion.Version,
 		Status:      "queued",
-		TriggerType: "manual",
+		TriggerType: triggerType,
 	}
 	if len(inputStr) > 0 && inputStr != "null" {
 		execution.Input = &inputStr
@@ -433,7 +470,7 @@ func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input 
 	}
 
 	// Queue execution with the execution ID
-	jobID, err = s.queueService.QueueWorkflowExecution(ctx, id, execution.ID, input, "manual")
+	jobID, err = s.queueService.QueueWorkflowExecution(ctx, id, execution.ID, input, triggerType)
 	if err != nil {
 		// Rollback: mark execution as failed
 		s.repo.Execution().Update(ctx, execution.ID, map[string]interface{}{
@@ -670,6 +707,60 @@ func (s *WorkflowService) CancelWorkflowExecution(executionID string) error {
 		"completed_at": now,
 		"error":        "Execution cancelled by user",
 	})
+}
+
+// GenerateWebhookSecret generates a new webhook secret and returns both the plain secret and its hash
+// The plain secret should be shown to the user once, then only the hash is stored
+func (s *WorkflowService) GenerateWebhookSecret() (plainSecret string, secretHash string, err error) {
+	// Generate 32 bytes (256 bits) of random data
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", "", fmt.Errorf("failed to generate random secret: %w", err)
+	}
+
+	// Encode as hex string (64 characters)
+	plainSecret = hex.EncodeToString(bytes)
+
+	// Hash the secret using bcrypt
+	secretHashBytes, err := bcrypt.GenerateFromPassword([]byte(plainSecret), 10)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to hash secret: %w", err)
+	}
+
+	secretHash = string(secretHashBytes)
+	return plainSecret, secretHash, nil
+}
+
+// ValidateWebhookSecret compares a provided secret against the stored hash
+func (s *WorkflowService) ValidateWebhookSecret(providedSecret string, secretHash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(secretHash), []byte(providedSecret))
+	return err == nil
+}
+
+// RegenerateWebhookSecret generates a new secret for a workflow
+func (s *WorkflowService) RegenerateWebhookSecret(ctx context.Context, workflowID string) (plainSecret string, err error) {
+	// Check if workflow exists
+	_, err = s.repo.Workflow().FindByID(ctx, workflowID)
+	if err != nil {
+		return "", err
+	}
+
+	// Generate new secret
+	plainSecret, secretHash, err := s.GenerateWebhookSecret()
+	if err != nil {
+		return "", err
+	}
+
+	// Update workflow with new secret hash
+	updates := map[string]interface{}{
+		"webhook_secret_hash": secretHash,
+	}
+
+	if err := s.repo.Workflow().Update(ctx, workflowID, updates); err != nil {
+		return "", fmt.Errorf("failed to update webhook secret: %w", err)
+	}
+
+	return plainSecret, nil
 }
 
 // RestoreWorkflowVersion restores a workflow to a previous version
