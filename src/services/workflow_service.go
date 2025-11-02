@@ -618,6 +618,54 @@ func (s *WorkflowService) GetFailedWorkflowExecutions(limit int) ([]dto.Executio
 	return s.convertExecutionsToResponses(executions), nil
 }
 
+// SECURITY: Account-filtered versions of the above methods
+
+// GetAllWorkflowExecutionsByAccount returns all executions filtered by account ID
+func (s *WorkflowService) GetAllWorkflowExecutionsByAccount(accountID string, limit int, status string) ([]dto.ExecutionResponse, error) {
+	var executions []models.WorkflowExecution
+
+	// Join with workflows table to filter by account
+	query := s.db.Table("workflow_executions").
+		Select("workflow_executions.*").
+		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
+		Where("workflows.account_id = ?", accountID).
+		Order("workflow_executions.started_at DESC").
+		Limit(limit)
+
+	// Apply status filter if provided
+	if status != "" && status != "all" {
+		query = query.Where("workflow_executions.status = ?", status)
+	}
+
+	err := query.Find(&executions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch executions: %w", err)
+	}
+
+	return s.convertExecutionsToResponses(executions), nil
+}
+
+// GetFailedWorkflowExecutionsByAccount returns failed executions filtered by account ID
+func (s *WorkflowService) GetFailedWorkflowExecutionsByAccount(accountID string, limit int) ([]dto.ExecutionResponse, error) {
+	var executions []models.WorkflowExecution
+
+	// Join with workflows table to filter by account
+	err := s.db.Table("workflow_executions").
+		Select("workflow_executions.*").
+		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
+		Where("workflows.account_id = ?", accountID).
+		Where("workflow_executions.status IN ?", []string{"error", "partially_failed"}).
+		Order("workflow_executions.started_at DESC").
+		Limit(limit).
+		Find(&executions).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch failed executions: %w", err)
+	}
+
+	return s.convertExecutionsToResponses(executions), nil
+}
+
 // convertExecutionsToResponses converts execution models to response DTOs
 func (s *WorkflowService) convertExecutionsToResponses(executions []models.WorkflowExecution) []dto.ExecutionResponse {
 	responses := make([]dto.ExecutionResponse, len(executions))

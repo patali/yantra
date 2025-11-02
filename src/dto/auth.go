@@ -6,7 +6,7 @@ import "time"
 type CreateUserRequest struct {
 	Username string `json:"username" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
+	Password string `json:"password" binding:"required,min=12,max=128"`
 }
 
 // LoginRequest represents the request to login
@@ -20,7 +20,7 @@ type SignupWithAccountRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Username string `json:"username" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
+	Password string `json:"password" binding:"required,min=12,max=128"`
 }
 
 // RequestPasswordResetRequest represents the request to reset password
@@ -31,7 +31,7 @@ type RequestPasswordResetRequest struct {
 // ResetPasswordRequest represents the request to reset password with token
 type ResetPasswordRequest struct {
 	Token       string `json:"token" binding:"required"`
-	NewPassword string `json:"newPassword" binding:"required,min=6"`
+	NewPassword string `json:"newPassword" binding:"required,min=12,max=128"`
 }
 
 // PasswordResetResponse represents the response for password reset
@@ -43,7 +43,7 @@ type PasswordResetResponse struct {
 // ChangePasswordRequest represents the request to change password
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword" binding:"required"`
-	NewPassword     string `json:"newPassword" binding:"required,min=6"`
+	NewPassword     string `json:"newPassword" binding:"required,min=12,max=128"`
 }
 
 // UserResponse represents the user response

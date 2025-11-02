@@ -307,6 +307,63 @@ func (s *OutboxService) RetryDeadLetterMessage(messageID string) error {
 		}).Error
 }
 
+// SECURITY: Account-filtered versions of the above methods
+
+// GetDeadLetterMessagesByAccount returns dead letter messages filtered by account ID
+func (s *OutboxService) GetDeadLetterMessagesByAccount(accountID string, limit int) ([]models.OutboxMessage, error) {
+	var messages []models.OutboxMessage
+
+	// Join through node_executions -> workflow_executions -> workflows to filter by account
+	err := s.db.Table("outbox_messages").
+		Select("outbox_messages.*").
+		Joins("INNER JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+		Joins("INNER JOIN workflow_executions ON workflow_executions.id = workflow_node_executions.execution_id").
+		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
+		Where("workflows.account_id = ?", accountID).
+		Where("outbox_messages.status = ?", "dead_letter").
+		Order("outbox_messages.last_attempt_at DESC").
+		Limit(limit).
+		Preload("NodeExecution").
+		Find(&messages).Error
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch dead letter messages: %w", err)
+	}
+
+	return messages, nil
+}
+
+// RetryDeadLetterMessageByAccount resets a dead letter message for retry, with account ownership check
+func (s *OutboxService) RetryDeadLetterMessageByAccount(messageID string, accountID string) error {
+	now := time.Now()
+
+	// Update with account ownership check using joins
+	result := s.db.Table("outbox_messages").
+		Joins("INNER JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+		Joins("INNER JOIN workflow_executions ON workflow_executions.id = workflow_node_executions.execution_id").
+		Joins("INNER JOIN workflows ON workflows.id = workflow_executions.workflow_id").
+		Where("outbox_messages.id = ?", messageID).
+		Where("workflows.account_id = ?", accountID).
+		Where("outbox_messages.status = ?", "dead_letter").
+		Updates(map[string]interface{}{
+			"status":          "pending",
+			"attempts":        0,
+			"next_retry_at":   now,
+			"last_error":      nil,
+			"last_attempt_at": nil,
+		})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("message not found or access denied")
+	}
+
+	return nil
+}
+
 // checkAndCompleteWorkflowExecution checks if all async operations are complete and marks workflow as success
 func (s *OutboxService) checkAndCompleteWorkflowExecution(tx *gorm.DB, executionID string) error {
 	// Get the workflow execution

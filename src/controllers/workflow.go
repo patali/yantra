@@ -179,7 +179,21 @@ func (ctrl *WorkflowController) UpdateSchedule(c *gin.Context) {
 // GetVersionHistory returns version history for a workflow
 // GET /api/workflows/:id/versions
 func (ctrl *WorkflowController) GetVersionHistory(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	id := c.Param("id")
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
 
 	versions, err := ctrl.workflowService.GetVersionHistory(id)
 	if err != nil {
@@ -193,7 +207,21 @@ func (ctrl *WorkflowController) GetVersionHistory(c *gin.Context) {
 // GetWorkflowExecutions returns all executions for a workflow
 // GET /api/workflows/:id/executions
 func (ctrl *WorkflowController) GetWorkflowExecutions(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	id := c.Param("id")
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
 
 	executions, err := ctrl.workflowService.GetWorkflowExecutions(id)
 	if err != nil {
@@ -207,12 +235,33 @@ func (ctrl *WorkflowController) GetWorkflowExecutions(c *gin.Context) {
 // GetWorkflowExecutionById returns a specific workflow execution with node executions
 // GET /api/workflows/:id/executions/:executionId
 func (ctrl *WorkflowController) GetWorkflowExecutionById(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	workflowId := c.Param("id")
 	executionId := c.Param("executionId")
 	includeRecovery := c.Query("includeRecovery") == "true"
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(workflowId, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
 
 	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionId)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found"})
+		return
+	}
+
+	// SECURITY: Double-check execution belongs to the workflow
+	if execution.WorkflowID != workflowId {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found or access denied"})
 		return
 	}
 
@@ -360,7 +409,29 @@ func (ctrl *WorkflowController) StreamWorkflowExecution(c *gin.Context) {
 // ResumeExecution resumes a failed or interrupted workflow execution
 // POST /api/workflows/:id/executions/:executionId/resume
 func (ctrl *WorkflowController) ResumeExecution(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	workflowID := c.Param("id")
 	executionID := c.Param("executionId")
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(workflowID, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
+
+	// SECURITY: Verify execution belongs to this workflow
+	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionID)
+	if err != nil || execution.WorkflowID != workflowID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found or access denied"})
+		return
+	}
 
 	jobID, err := ctrl.workflowService.ResumeWorkflow(c.Request.Context(), executionID)
 	if err != nil {
@@ -377,7 +448,21 @@ func (ctrl *WorkflowController) ResumeExecution(c *gin.Context) {
 // RestoreVersion restores a workflow to a previous version
 // POST /api/workflows/:id/versions/restore
 func (ctrl *WorkflowController) RestoreVersion(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	id := c.Param("id")
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
 
 	var req struct {
 		Version int `json:"version" binding:"required"`
@@ -398,9 +483,22 @@ func (ctrl *WorkflowController) RestoreVersion(c *gin.Context) {
 // DuplicateWorkflow creates a copy of an existing workflow
 // POST /api/workflows/:id/duplicate
 func (ctrl *WorkflowController) DuplicateWorkflow(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	id := c.Param("id")
 	userID, _ := middleware.GetUserID(c)
-	accountID, _ := middleware.GetAccountID(c)
+
+	// SECURITY: Verify source workflow belongs to user's account (prevent IP theft!)
+	_, err := ctrl.workflowService.GetWorkflowByIdAndAccount(id, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
 
 	duplicatedWorkflow, err := ctrl.workflowService.DuplicateWorkflow(c.Request.Context(), id, userID, accountID)
 	if err != nil {

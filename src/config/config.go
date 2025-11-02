@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -13,7 +14,8 @@ type Config struct {
 	Port                    string
 	Environment             string
 	AppURL                  string
-	SystemEmailProvider     string // "smtp" or "resend"
+	AllowedOrigins          []string // CORS allowed origins
+	SystemEmailProvider     string   // "smtp" or "resend"
 	SystemEmailFrom         string
 	SystemEmailFromName     string
 	SystemEmailSMTPHost     string
@@ -33,6 +35,7 @@ func Load() (*Config, error) {
 		Port:                    getEnvOrDefault("PORT", "3000"),
 		Environment:             getEnvOrDefault("NODE_ENV", "development"),
 		AppURL:                  getEnvOrDefault("APP_URL", "http://localhost:3000"),
+		AllowedOrigins:          parseAllowedOrigins(getEnvOrDefault("ALLOWED_ORIGINS", "http://localhost:4700")),
 		SystemEmailProvider:     getEnvOrDefault("SYSTEM_EMAIL_PROVIDER", "smtp"),
 		SystemEmailFrom:         getEnvOrDefault("SYSTEM_EMAIL_FROM", "noreply@yantra.local"),
 		SystemEmailFromName:     getEnvOrDefault("SYSTEM_EMAIL_FROM_NAME", "Yantra"),
@@ -59,4 +62,23 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// parseAllowedOrigins parses a comma-separated list of allowed origins
+func parseAllowedOrigins(originsStr string) []string {
+	if originsStr == "" {
+		return []string{}
+	}
+
+	origins := strings.Split(originsStr, ",")
+	result := make([]string, 0, len(origins))
+
+	for _, origin := range origins {
+		trimmed := strings.TrimSpace(origin)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+
+	return result
 }

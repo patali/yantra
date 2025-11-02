@@ -160,6 +160,36 @@ func (s *AccountService) UpdateAccount(accountID, name string) error {
 	return nil
 }
 
+// IsUserMemberOfAccount checks if a user is a member of an account
+func (s *AccountService) IsUserMemberOfAccount(userID, accountID string) (bool, error) {
+	var count int64
+	err := s.db.Model(&models.AccountMember{}).
+		Where("user_id = ? AND account_id = ?", userID, accountID).
+		Count(&count).Error
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check membership: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// GetUserRoleInAccount gets the user's role in an account (owner, admin, member)
+func (s *AccountService) GetUserRoleInAccount(userID, accountID string) (string, error) {
+	var member models.AccountMember
+	err := s.db.Where("user_id = ? AND account_id = ?", userID, accountID).
+		First(&member).Error
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", fmt.Errorf("user is not a member of this account")
+		}
+		return "", fmt.Errorf("failed to get user role: %w", err)
+	}
+
+	return member.Role, nil
+}
+
 // Helper to convert model to response
 func (s *AccountService) toAccountResponse(account *models.Account) *dto.AccountResponse {
 	response := &dto.AccountResponse{

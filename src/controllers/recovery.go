@@ -54,14 +54,22 @@ func (ctrl *RecoveryController) RegisterRoutes(rg *gin.RouterGroup, authService 
 	}
 }
 
-// GetAllRuns returns all workflow executions (runs)
+// GetAllRuns returns all workflow executions (runs) for the current account
 // GET /api/recovery/runs?status=all&limit=100
 func (ctrl *RecoveryController) GetAllRuns(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	// Get query parameters
 	status := c.DefaultQuery("status", "all")
 	limit := 100 // Default limit
 
-	executions, err := ctrl.workflowService.GetAllWorkflowExecutions(limit, status)
+	// SECURITY: Filter by account ID
+	executions, err := ctrl.workflowService.GetAllWorkflowExecutionsByAccount(accountID, limit, status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -70,10 +78,18 @@ func (ctrl *RecoveryController) GetAllRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, executions)
 }
 
-// GetFailedExecutions returns all failed workflow executions
+// GetFailedExecutions returns all failed workflow executions for the current account
 // GET /api/recovery/failed-executions
 func (ctrl *RecoveryController) GetFailedExecutions(c *gin.Context) {
-	executions, err := ctrl.workflowService.GetFailedWorkflowExecutions(100) // Limit to 100 executions
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// SECURITY: Filter by account ID
+	executions, err := ctrl.workflowService.GetFailedWorkflowExecutionsByAccount(accountID, 100) // Limit to 100 executions
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -82,10 +98,18 @@ func (ctrl *RecoveryController) GetFailedExecutions(c *gin.Context) {
 	c.JSON(http.StatusOK, executions)
 }
 
-// GetDeadLetterMessages returns all dead letter messages
+// GetDeadLetterMessages returns all dead letter messages for the current account
 // GET /api/recovery/dead-letter
 func (ctrl *RecoveryController) GetDeadLetterMessages(c *gin.Context) {
-	messages, err := ctrl.outboxService.GetDeadLetterMessages(100) // Limit to 100 messages
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// SECURITY: Filter by account ID
+	messages, err := ctrl.outboxService.GetDeadLetterMessagesByAccount(accountID, 100) // Limit to 100 messages
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -97,11 +121,19 @@ func (ctrl *RecoveryController) GetDeadLetterMessages(c *gin.Context) {
 // RetryDeadLetterMessage retries a specific dead letter message
 // POST /api/recovery/dead-letter/:messageId/retry
 func (ctrl *RecoveryController) RetryDeadLetterMessage(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	messageId := c.Param("messageId")
 
-	err := ctrl.outboxService.RetryDeadLetterMessage(messageId)
+	// SECURITY: Verify message belongs to user's account
+	err := ctrl.outboxService.RetryDeadLetterMessageByAccount(messageId, accountID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Message not found or access denied"})
 		return
 	}
 
@@ -111,12 +143,26 @@ func (ctrl *RecoveryController) RetryDeadLetterMessage(c *gin.Context) {
 // RestartWorkflow restarts a failed workflow execution
 // POST /api/recovery/workflows/:executionId/restart
 func (ctrl *RecoveryController) RestartWorkflow(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	executionId := c.Param("executionId")
 
 	// Get the execution to find the workflow ID
 	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionId)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found"})
+		return
+	}
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err = ctrl.workflowService.GetWorkflowByIdAndAccount(execution.WorkflowID, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
 		return
 	}
 
@@ -154,9 +200,30 @@ func (ctrl *RecoveryController) RestartWorkflow(c *gin.Context) {
 // CancelWorkflow cancels a running workflow execution
 // POST /api/recovery/workflows/:executionId/cancel
 func (ctrl *RecoveryController) CancelWorkflow(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	executionId := c.Param("executionId")
 
-	err := ctrl.workflowService.CancelWorkflowExecution(executionId)
+	// SECURITY: Get execution and verify ownership
+	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionId)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found"})
+		return
+	}
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err = ctrl.workflowService.GetWorkflowByIdAndAccount(execution.WorkflowID, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
+		return
+	}
+
+	err = ctrl.workflowService.CancelWorkflowExecution(executionId)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -171,6 +238,13 @@ func (ctrl *RecoveryController) CancelWorkflow(c *gin.Context) {
 // ReExecuteNode retries a specific node execution
 // POST /api/recovery/executions/:executionId/nodes/:nodeId/retry
 func (ctrl *RecoveryController) ReExecuteNode(c *gin.Context) {
+	// SECURITY: Get account ID from auth middleware
+	accountID, exists := middleware.GetAccountID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
 	executionId := c.Param("executionId")
 	nodeId := c.Param("nodeId")
 
@@ -178,6 +252,13 @@ func (ctrl *RecoveryController) ReExecuteNode(c *gin.Context) {
 	execution, err := ctrl.workflowService.GetWorkflowExecutionById(executionId)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Execution not found"})
+		return
+	}
+
+	// SECURITY: Verify workflow belongs to user's account
+	_, err = ctrl.workflowService.GetWorkflowByIdAndAccount(execution.WorkflowID, accountID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workflow not found or access denied"})
 		return
 	}
 
@@ -226,21 +307,13 @@ func (ctrl *RecoveryController) ReExecuteNode(c *gin.Context) {
 		nodeInput = make(map[string]interface{})
 	}
 
-	// Get account ID from the workflow
-	workflowModel, err := ctrl.workflowService.GetWorkflowById(execution.WorkflowID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get workflow details"})
-		return
-	}
-
-	accountID := workflowModel.AccountID
-
 	// Create a new outbox message for retry
 	// This will trigger the outbox worker to process the node again
+	// Note: accountID already verified via GetWorkflowByIdAndAccount above
 	_, _, err = ctrl.outboxService.ExecuteNodeWithOutbox(
 		c.Request.Context(),
 		executionId,
-		accountID,
+		&accountID, // Pass as pointer
 		nodeId,
 		nodeExecution.NodeType,
 		make(map[string]interface{}), // Node config - would need to be retrieved from workflow definition

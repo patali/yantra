@@ -103,8 +103,9 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Logger())
 	router.Use(middleware.Recovery())
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg.AllowedOrigins)) // SECURITY: Use environment-based allowed origins
 	router.Use(middleware.ErrorHandler())
+	router.Use(middleware.RateLimitByMinute(100, 20)) // SECURITY: Global rate limit - 100 req/min, burst 20
 
 	// Middleware to inject DB into context
 	router.Use(func(c *gin.Context) {
@@ -123,9 +124,12 @@ func main() {
 	// API routes
 	api := router.Group("/api")
 	{
-		// Auth routes
+		// Auth routes with stricter rate limiting
+		// SECURITY: 10 requests per minute to prevent brute force attacks
+		authAPI := api.Group("")
+		authAPI.Use(middleware.RateLimitByMinute(10, 3)) // Stricter: 10 req/min, burst 3
 		authController := controllers.NewAuthController(authService)
-		authController.RegisterRoutes(api)
+		authController.RegisterRoutes(authAPI)
 
 		// Workflow routes
 		workflowController := controllers.NewWorkflowController(workflowService)
