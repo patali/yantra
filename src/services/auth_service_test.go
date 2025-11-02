@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/patali/yantra/src/db/models"
+	"github.com/patali/yantra/src/db/repositories"
 	"github.com/patali/yantra/src/dto"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/bcrypt"
@@ -167,7 +168,8 @@ func TestAuthService_SignupWithAccount(t *testing.T) {
 func TestUserService_UpdatePassword(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
-	userService := NewUserService(db)
+	repo := repositories.NewRepository(db)
+	userService := NewUserService(repo)
 
 	// Create user
 	req := dto.CreateUserRequest{
@@ -196,7 +198,8 @@ func TestUserService_UpdatePassword(t *testing.T) {
 func TestUserService_UpdatePassword_WrongCurrentPassword(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
-	userService := NewUserService(db)
+	repo := repositories.NewRepository(db)
+	userService := NewUserService(repo)
 
 	// Create user
 	req := dto.CreateUserRequest{
