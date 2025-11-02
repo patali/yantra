@@ -43,8 +43,11 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                           // Frontend endpoint
 	}
 
-	// Webhook routes (public, no auth middleware)
+	// Webhook routes (public, no auth middleware, but with rate limiting)
 	webhooks := rg.Group("/webhooks")
+	// Apply rate limiting to webhook endpoints (60 requests per minute per IP, burst of 10)
+	// This is stricter than global limit to prevent abuse while allowing legitimate usage
+	webhooks.Use(middleware.RateLimitByMinute(60, 10))
 	{
 		webhooks.POST("/:workflowId", ctrl.TriggerWebhook)       // Default webhook endpoint
 		webhooks.POST("/:workflowId/:path", ctrl.TriggerWebhook) // Custom path webhook endpoint
