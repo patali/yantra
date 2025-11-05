@@ -1,8 +1,10 @@
 package queries
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/patali/yantra/src/executors"
 	"gorm.io/gorm"
 )
 
@@ -25,7 +27,8 @@ type ExecutionInfo struct {
 func FindRunningExecutionsWithStats(db *gorm.DB) ([]ExecutionInfo, error) {
 	var executionInfos []ExecutionInfo
 
-	query := `
+	// Build query using node type constant to ensure consistency with code
+	query := fmt.Sprintf(`
 		SELECT
 			we.id as execution_id,
 			we.workflow_id as workflow_id,
@@ -36,13 +39,13 @@ func FindRunningExecutionsWithStats(db *gorm.DB) ([]ExecutionInfo, error) {
 			SUM(CASE WHEN wne.status = 'success' THEN 1 ELSE 0 END) as success_nodes,
 			SUM(CASE WHEN wne.status = 'running' THEN 1 ELSE 0 END) as running_nodes,
 			COUNT(DISTINCT CASE WHEN om.status IN ('pending', 'processing') THEN om.id END) as pending_messages,
-			BOOL_OR(wne.node_type = 'end' AND wne.status = 'success') as has_end_node
+			BOOL_OR(wne.node_type = '%s' AND wne.status = 'success') as has_end_node
 		FROM workflow_executions we
 		LEFT JOIN workflow_node_executions wne ON wne.execution_id = we.id
 		LEFT JOIN outbox_messages om ON om.node_execution_id = wne.id
 		WHERE we.status = 'running'
 		GROUP BY we.id, we.workflow_id, we.version, we.started_at
-	`
+	`, executors.NodeTypeEnd)
 
 	err := db.Raw(query).Scan(&executionInfos).Error
 	if err != nil {

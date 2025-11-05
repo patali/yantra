@@ -367,7 +367,7 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 	var startNodeID string
 	for nodeID, node := range nodeMap {
 		nodeType, _ := node["type"].(string)
-		if nodeType == "start" {
+		if nodeType == executors.NodeTypeStart {
 			startNodeID = nodeID
 			break
 		}
@@ -426,7 +426,7 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 		nodeType, _ := currentNode["type"].(string)
 
 		// Skip start and end nodes for execution
-		if nodeType != "start" && nodeType != "end" {
+		if !executors.IsSkippableNode(nodeType) {
 			// Increment node execution counter
 			limits.nodesExecuted++
 			// Get node config
@@ -975,7 +975,7 @@ func (s *WorkflowEngineService) executeSubgraph(
 		nodeType, _ := node["type"].(string)
 
 		// Skip start and end nodes in subgraph
-		if nodeType == "start" || nodeType == "end" {
+		if executors.IsSkippableNode(nodeType) {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)
@@ -1435,7 +1435,7 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 		nodeType, _ := node["type"].(string)
 
 		// Skip start and end nodes in subgraph
-		if nodeType == "start" || nodeType == "end" {
+		if executors.IsSkippableNode(nodeType) {
 			// Add children to queue but don't execute
 			for _, nextNodeID := range adjacencyList[nodeID] {
 				queue = append(queue, nextNodeID)

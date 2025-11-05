@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/dto"
 	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
@@ -669,7 +670,7 @@ func (ctrl *WorkflowController) TriggerWebhook(c *gin.Context) {
 	}
 
 	// Trigger workflow execution with "webhook" trigger type
-	jobID, executionID, err := ctrl.workflowService.ExecuteWorkflowWithTrigger(c.Request.Context(), workflowID, input, "webhook")
+	jobID, executionID, err := ctrl.workflowService.ExecuteWorkflowWithTrigger(c.Request.Context(), workflowID, input, models.TriggerTypeWebhook)
 	if err != nil {
 		// SECURITY: Don't expose internal errors - use generic message
 		middleware.RespondInternalError(c, "Failed to trigger workflow")
