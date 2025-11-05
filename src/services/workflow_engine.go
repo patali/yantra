@@ -525,6 +525,16 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 
 				// Store output for next nodes
 				nodeOutputs[currentNodeID] = output
+
+				// CRITICAL: Check if workflow entered a terminal state (sleeping, completed, failed)
+				// This prevents continuing execution when workflow should be paused
+				var currentExecution models.WorkflowExecution
+				if err := s.db.First(&currentExecution, "id = ?", executionID).Error; err == nil {
+					if currentExecution.Status == "sleeping" {
+						log.Printf("  💤 Workflow entered sleeping state after node %s - stopping execution", currentNodeID)
+						return nil // Stop execution gracefully
+					}
+				}
 			}
 		}
 
@@ -698,6 +708,8 @@ func (s *WorkflowEngineService) executeSynchronousNode(ctx context.Context, exec
 			var workflow models.Workflow
 			if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
 				log.Printf("  ❌ Failed to find workflow for sleep: %v", err)
+				// Rollback sleeping status
+				s.db.Model(&execution).Update("status", "running")
 				return fmt.Errorf("failed to find workflow: %w", err)
 			}
 
@@ -711,11 +723,13 @@ func (s *WorkflowEngineService) executeSynchronousNode(ctx context.Context, exec
 			log.Printf("  ✅ Workflow execution %s is now sleeping until %s", executionID, result.WakeUpAt.Format(time.RFC3339))
 		} else {
 			log.Printf("  ⚠️  Scheduler service not available, cannot schedule sleep wake-up")
+			// Rollback sleeping status
+			s.db.Model(&execution).Update("status", "running")
 			return fmt.Errorf("scheduler service not available for sleep node")
 		}
 
-		// Return special error to stop workflow execution
-		return fmt.Errorf("workflow entered sleeping state")
+		// Return nil - caller will check execution status and stop workflow
+		return nil
 	}
 
 	// Update node execution with success
@@ -917,6 +931,8 @@ func (s *WorkflowEngineService) executeSynchronousNodeWithOutput(ctx context.Con
 			var workflow models.Workflow
 			if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
 				log.Printf("  ❌ Failed to find workflow for sleep: %v", err)
+				// Rollback sleeping status
+				s.db.Model(&execution).Update("status", "running")
 				return nil, fmt.Errorf("failed to find workflow: %w", err)
 			}
 
@@ -930,11 +946,13 @@ func (s *WorkflowEngineService) executeSynchronousNodeWithOutput(ctx context.Con
 			log.Printf("  ✅ Workflow execution %s is now sleeping until %s", executionID, result.WakeUpAt.Format(time.RFC3339))
 		} else {
 			log.Printf("  ⚠️  Scheduler service not available, cannot schedule sleep wake-up")
+			// Rollback sleeping status
+			s.db.Model(&execution).Update("status", "running")
 			return nil, fmt.Errorf("scheduler service not available for sleep node")
 		}
 
-		// Return special error to stop workflow execution
-		return nil, fmt.Errorf("workflow entered sleeping state")
+		// Return the sleep output (BFS loop will check execution status and stop)
+		return result.Output, nil
 	}
 
 	// Update node execution with success
