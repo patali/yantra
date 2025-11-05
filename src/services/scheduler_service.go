@@ -79,6 +79,9 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	// Start a goroutine to periodically sync schedules from database
 	go s.syncSchedulesLoop(ctx)
 
+	// Start a goroutine to poll for sleep schedule wake-ups
+	go s.pollSleepSchedules(ctx)
+
 	return nil
 }
 
@@ -386,4 +389,122 @@ func (s *SchedulerService) hasSixFields(cronExpr string) bool {
 	}
 
 	return fields >= 6
+}
+
+// ScheduleSleepWakeUp schedules a one-time wake-up for a sleeping workflow
+func (s *SchedulerService) ScheduleSleepWakeUp(executionID, workflowID, nodeID string, wakeUpAt time.Time) error {
+	log.Printf("📅 Scheduling sleep wake-up for execution %s", executionID)
+	log.Printf("   Workflow: %s", workflowID)
+	log.Printf("   Node: %s", nodeID)
+	log.Printf("   Wake up at: %s", wakeUpAt.Format(time.RFC3339))
+
+	// Create sleep schedule record in database
+	sleepSchedule := models.SleepSchedule{
+		ExecutionID: executionID,
+		WorkflowID:  workflowID,
+		NodeID:      nodeID,
+		WakeUpAt:    wakeUpAt,
+	}
+
+	if err := s.db.Create(&sleepSchedule).Error; err != nil {
+		log.Printf("❌ Failed to create sleep schedule: %v", err)
+		return fmt.Errorf("failed to create sleep schedule: %w", err)
+	}
+
+	log.Printf("✅ Sleep schedule created successfully (ID: %s)", sleepSchedule.ID)
+	return nil
+}
+
+// pollSleepSchedules polls for sleep schedules that need to wake up
+func (s *SchedulerService) pollSleepSchedules(ctx context.Context) {
+	log.Println("🔄 Starting sleep schedule poller...")
+	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := s.processSleepSchedules(ctx); err != nil {
+				log.Printf("❌ Error processing sleep schedules: %v", err)
+			}
+		case <-ctx.Done():
+			log.Println("⏹️  Sleep schedule poller stopped")
+			return
+		}
+	}
+}
+
+// processSleepSchedules processes sleep schedules that are ready to wake up
+func (s *SchedulerService) processSleepSchedules(ctx context.Context) error {
+	now := time.Now().UTC()
+
+	// Get all sleep schedules where wake_up_at <= now
+	var schedules []models.SleepSchedule
+	if err := s.db.Where("wake_up_at <= ?", now).Find(&schedules).Error; err != nil {
+		return fmt.Errorf("failed to query sleep schedules: %w", err)
+	}
+
+	if len(schedules) == 0 {
+		return nil
+	}
+
+	log.Printf("⏰ Found %d sleep schedule(s) ready to wake up", len(schedules))
+
+	for _, schedule := range schedules {
+		log.Printf("🔔 Waking up execution %s (workflow: %s)", schedule.ExecutionID, schedule.WorkflowID)
+
+		// Resume the workflow execution
+		if err := s.resumeWorkflowFromSleep(ctx, schedule.ExecutionID, schedule.WorkflowID); err != nil {
+			log.Printf("❌ Failed to resume execution %s: %v", schedule.ExecutionID, err)
+			// Continue to next schedule even if this one fails
+			continue
+		}
+
+		// Delete the sleep schedule after successful resume
+		if err := s.db.Delete(&schedule).Error; err != nil {
+			log.Printf("⚠️  Failed to delete sleep schedule %s: %v", schedule.ID, err)
+			// Don't return error - the execution is already resumed
+		}
+
+		log.Printf("✅ Execution %s resumed successfully", schedule.ExecutionID)
+	}
+
+	return nil
+}
+
+// resumeWorkflowFromSleep resumes a workflow execution from sleeping state
+func (s *SchedulerService) resumeWorkflowFromSleep(ctx context.Context, executionID, workflowID string) error {
+	// Get the execution
+	var execution models.WorkflowExecution
+	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		return fmt.Errorf("failed to find execution: %w", err)
+	}
+
+	// Verify it's in sleeping state
+	if execution.Status != "sleeping" {
+		log.Printf("⚠️  Execution %s is not in sleeping state (current: %s), skipping resume", executionID, execution.Status)
+		return nil
+	}
+
+	// Get workflow to find version
+	var workflow models.Workflow
+	if err := s.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
+		return fmt.Errorf("failed to find workflow: %w", err)
+	}
+
+	// Update execution status to running
+	if err := s.db.Model(&execution).Update("status", "running").Error; err != nil {
+		return fmt.Errorf("failed to update execution status: %w", err)
+	}
+
+	// Queue the execution for resumption
+	// The workflow engine will continue from the last checkpoint
+	_, err := s.queueService.QueueWorkflowExecution(ctx, workflowID, executionID, map[string]interface{}{}, "resume_from_sleep")
+	if err != nil {
+		// Rollback status update
+		s.db.Model(&execution).Update("status", "sleeping")
+		return fmt.Errorf("failed to queue execution: %w", err)
+	}
+
+	return nil
 }

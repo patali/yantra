@@ -2,6 +2,7 @@ package executors
 
 import (
 	"context"
+	"time"
 )
 
 // ExecutionContext holds the context for node execution
@@ -16,9 +17,11 @@ type ExecutionContext struct {
 
 // ExecutionResult holds the result of node execution
 type ExecutionResult struct {
-	Success bool                   `json:"success"`
-	Output  map[string]interface{} `json:"output"`
-	Error   string                 `json:"error,omitempty"`
+	Success    bool                   `json:"success"`
+	Output     map[string]interface{} `json:"output"`
+	Error      string                 `json:"error,omitempty"`
+	NeedsSleep bool                   `json:"needs_sleep,omitempty"` // If true, workflow should enter sleeping state
+	WakeUpAt   *time.Time             `json:"wake_up_at,omitempty"`  // When to resume execution (UTC)
 }
 
 // Executor interface that all node executors must implement

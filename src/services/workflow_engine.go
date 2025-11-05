@@ -25,9 +25,10 @@ const (
 )
 
 type WorkflowEngineService struct {
-	db              *gorm.DB
-	executorFactory *executors.ExecutorFactory
-	outboxService   *OutboxService
+	db               *gorm.DB
+	executorFactory  *executors.ExecutorFactory
+	outboxService    *OutboxService
+	schedulerService *SchedulerService // Optional: for sleep node support
 }
 
 // executionLimits tracks execution limits to prevent abuse
@@ -39,10 +40,16 @@ type executionLimits struct {
 
 func NewWorkflowEngineService(db *gorm.DB, emailService executors.EmailServiceInterface) *WorkflowEngineService {
 	return &WorkflowEngineService{
-		db:              db,
-		executorFactory: executors.NewExecutorFactory(db, emailService),
-		outboxService:   NewOutboxService(db),
+		db:               db,
+		executorFactory:  executors.NewExecutorFactory(db, emailService),
+		outboxService:    NewOutboxService(db),
+		schedulerService: nil, // Set later via SetSchedulerService to avoid circular dependency
 	}
+}
+
+// SetSchedulerService sets the scheduler service (called after initialization to avoid circular dependency)
+func (s *WorkflowEngineService) SetSchedulerService(schedulerService *SchedulerService) {
+	s.schedulerService = schedulerService
 }
 
 // checkDataSize validates that data size is within limits
@@ -660,6 +667,57 @@ func (s *WorkflowEngineService) executeSynchronousNode(ctx context.Context, exec
 		return fmt.Errorf("node execution failed: %s", result.Error)
 	}
 
+	// Check if node needs to sleep
+	if result.NeedsSleep && result.WakeUpAt != nil {
+		log.Printf("  💤 Node %s requires sleep until %s", nodeID, result.WakeUpAt.Format(time.RFC3339))
+
+		// Mark node execution as success (it completed successfully, just needs to sleep)
+		outputJSON, _ := json.Marshal(result.Output)
+		outputStr := string(outputJSON)
+		now := time.Now()
+		s.db.Model(&nodeExecution).Updates(map[string]interface{}{
+			"status":       "success",
+			"output":       outputStr,
+			"completed_at": now,
+		})
+
+		// Mark workflow execution as sleeping
+		var execution models.WorkflowExecution
+		if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+			log.Printf("  ❌ Failed to find execution for sleep: %v", err)
+			return fmt.Errorf("failed to find execution: %w", err)
+		}
+
+		if err := s.db.Model(&execution).Update("status", "sleeping").Error; err != nil {
+			log.Printf("  ❌ Failed to mark execution as sleeping: %v", err)
+			return fmt.Errorf("failed to update execution status: %w", err)
+		}
+
+		// Schedule wake-up if scheduler service is available
+		if s.schedulerService != nil {
+			var workflow models.Workflow
+			if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
+				log.Printf("  ❌ Failed to find workflow for sleep: %v", err)
+				return fmt.Errorf("failed to find workflow: %w", err)
+			}
+
+			if err := s.schedulerService.ScheduleSleepWakeUp(executionID, workflow.ID, nodeID, *result.WakeUpAt); err != nil {
+				log.Printf("  ❌ Failed to schedule sleep wake-up: %v", err)
+				// Rollback sleeping status
+				s.db.Model(&execution).Update("status", "running")
+				return fmt.Errorf("failed to schedule sleep wake-up: %w", err)
+			}
+
+			log.Printf("  ✅ Workflow execution %s is now sleeping until %s", executionID, result.WakeUpAt.Format(time.RFC3339))
+		} else {
+			log.Printf("  ⚠️  Scheduler service not available, cannot schedule sleep wake-up")
+			return fmt.Errorf("scheduler service not available for sleep node")
+		}
+
+		// Return special error to stop workflow execution
+		return fmt.Errorf("workflow entered sleeping state")
+	}
+
 	// Update node execution with success
 	outputJSON, _ := json.Marshal(result.Output)
 	outputStr := string(outputJSON)
@@ -826,6 +884,57 @@ func (s *WorkflowEngineService) executeSynchronousNodeWithOutput(ctx context.Con
 			"completed_at": now,
 		})
 		return nil, fmt.Errorf("node execution failed: %s", result.Error)
+	}
+
+	// Check if node needs to sleep
+	if result.NeedsSleep && result.WakeUpAt != nil {
+		log.Printf("  💤 Node %s requires sleep until %s", nodeID, result.WakeUpAt.Format(time.RFC3339))
+
+		// Mark node execution as success (it completed successfully, just needs to sleep)
+		outputJSON, _ := json.Marshal(result.Output)
+		outputStr := string(outputJSON)
+		now := time.Now()
+		s.db.Model(&nodeExecution).Updates(map[string]interface{}{
+			"status":       "success",
+			"output":       outputStr,
+			"completed_at": now,
+		})
+
+		// Mark workflow execution as sleeping
+		var execution models.WorkflowExecution
+		if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+			log.Printf("  ❌ Failed to find execution for sleep: %v", err)
+			return nil, fmt.Errorf("failed to find execution: %w", err)
+		}
+
+		if err := s.db.Model(&execution).Update("status", "sleeping").Error; err != nil {
+			log.Printf("  ❌ Failed to mark execution as sleeping: %v", err)
+			return nil, fmt.Errorf("failed to update execution status: %w", err)
+		}
+
+		// Schedule wake-up if scheduler service is available
+		if s.schedulerService != nil {
+			var workflow models.Workflow
+			if err := s.db.First(&workflow, "id = ?", execution.WorkflowID).Error; err != nil {
+				log.Printf("  ❌ Failed to find workflow for sleep: %v", err)
+				return nil, fmt.Errorf("failed to find workflow: %w", err)
+			}
+
+			if err := s.schedulerService.ScheduleSleepWakeUp(executionID, workflow.ID, nodeID, *result.WakeUpAt); err != nil {
+				log.Printf("  ❌ Failed to schedule sleep wake-up: %v", err)
+				// Rollback sleeping status
+				s.db.Model(&execution).Update("status", "running")
+				return nil, fmt.Errorf("failed to schedule sleep wake-up: %w", err)
+			}
+
+			log.Printf("  ✅ Workflow execution %s is now sleeping until %s", executionID, result.WakeUpAt.Format(time.RFC3339))
+		} else {
+			log.Printf("  ⚠️  Scheduler service not available, cannot schedule sleep wake-up")
+			return nil, fmt.Errorf("scheduler service not available for sleep node")
+		}
+
+		// Return special error to stop workflow execution
+		return nil, fmt.Errorf("workflow entered sleeping state")
 	}
 
 	// Update node execution with success

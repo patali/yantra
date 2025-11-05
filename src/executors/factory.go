@@ -53,6 +53,8 @@ func (f *ExecutorFactory) GetExecutor(nodeType string) (Executor, error) {
 		return NewTransformExecutor(), nil
 	case NodeTypeDelay:
 		return NewDelayExecutor(), nil
+	case NodeTypeSleep:
+		return NewSleepExecutor(), nil
 	case NodeTypeEmail:
 		return NewEmailExecutor(f.db, f.emailService), nil
 	case NodeTypeHTTP:

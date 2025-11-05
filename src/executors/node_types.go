@@ -9,6 +9,7 @@ const (
 	NodeTypeConditional     = "conditional"
 	NodeTypeTransform       = "transform"
 	NodeTypeDelay           = "delay"
+	NodeTypeSleep           = "sleep"
 	NodeTypeEmail           = "email"
 	NodeTypeHTTP            = "http"
 	NodeTypeSlack           = "slack"
@@ -39,6 +40,7 @@ var (
 		NodeTypeConditional,
 		NodeTypeTransform,
 		NodeTypeDelay,
+		NodeTypeSleep,
 		NodeTypeEmail,
 		NodeTypeHTTP,
 		NodeTypeSlack,
