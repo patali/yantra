@@ -1,191 +1,292 @@
-# Yantra Server
+# Yantra
 
-## Database Migrations
+**A reliable, visual workflow automation platform for building complex business processes without code.**
 
-Migrations are integrated directly into the application and run automatically on startup. Both River (job queue) and GORM (application models) migrations are handled programmatically.
+Yantra enables you to design and execute workflows using a visual, node-based editor. What you see in the editor is exactly what executes—no hidden compilation steps, no surprises.
 
-## Migration Methods
+## What is Yantra?
 
-### Method 1: Automatic on Startup (Default)
+Yantra is a workflow automation server that lets you:
+- **Design workflows visually** using a drag-and-drop WYSIWYG editor
+- **Execute reliably** with guaranteed delivery and fault tolerance
+- **Integrate easily** with HTTP APIs, databases, email, Slack, and more
+- **Scale effortlessly** with built-in job queues and horizontal scaling
+- **Monitor comprehensively** with execution history and debugging tools
 
-Migrations run automatically when you start the server:
+### Core Features
 
+🎨 **WYSIWYG Workflow Design**
+- Visual node-based editor
+- Drag-and-drop workflow creation
+- Real-time validation
+- What you design is what executes—no hidden transformations
+
+🔒 **Guaranteed Reliability**
+- Transactional outbox pattern ensures no lost jobs
+- Automatic checkpointing for failure recovery
+- Exactly-once execution semantics
+- Resume workflows from last successful checkpoint
+
+⚡ **Powerful Node Types**
+- **Data Processing**: JSON, transforms, CSV conversion
+- **Control Flow**: Conditionals, loops, delays
+- **Integrations**: HTTP, Email, Slack
+- **Advanced**: Loop accumulators, array processing
+
+🔄 **Flexible Triggers**
+- Manual execution
+- Scheduled (cron expressions)
+- Webhooks (with optional authentication)
+- API calls
+
+📊 **Comprehensive Monitoring**
+- Execution history and logs
+- Node-level debugging
+- Success/failure metrics
+- Input/output inspection
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.21 or higher
+- PostgreSQL 15+
+- (Optional) Docker & Docker Compose
+
+### Local Development
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/patali/yantra-server.git
+cd yantra-server
+```
+
+2. **Set up environment variables**
+```bash
+cp .env.example .env
+# Edit .env with your database credentials
+```
+
+3. **Start the database**
+```bash
+docker-compose up -d postgres
+```
+
+4. **Run the server**
 ```bash
 go run cmd/server/main.go
 ```
 
-On startup, the application will:
-1. Run River migrations (creates job queue tables)
-2. Run GORM migrations (creates application tables)
-3. Start the server
+The server will start on `http://localhost:3000` and automatically run database migrations.
 
-**Benefits:**
-- ✅ Zero configuration needed
-- ✅ Always up-to-date database schema
-- ✅ Works in all environments (dev, staging, production)
-
-### Method 2: Migration API Endpoint
-
-For production deployments where you want explicit control over migrations:
-
-1. **Generate a secure API key:**
-```bash
-openssl rand -hex 32
-```
-
-2. **Set the key in your environment:**
-```bash
-MIGRATION_API_KEY=your-generated-key
-```
-
-3. **Use the migration endpoints:**
-
-```bash
-# Check migration status
-curl -H "X-Migration-Key: your-secret-key" \
-  http://localhost:3000/api/migration/status
-
-# Run migrations manually
-curl -X POST -H "X-Migration-Key: your-secret-key" \
-  http://localhost:3000/api/migration/run
-```
-
-**Security Notes:**
-- The endpoint is **disabled** if `MIGRATION_API_KEY` is not set
-- Requires exact API key match in the `X-Migration-Key` header
-- Safe to call multiple times (migrations are idempotent)
-
-**Benefits:**
-- ✅ Explicit control over when migrations run
-- ✅ Useful for CI/CD pipelines
-- ✅ Can run migrations before deploying new code
-
-## Docker Setup
-
-### Build and run with Docker Compose
+### Docker Deployment
 
 ```bash
 docker-compose up --build
 ```
 
-Migrations will run automatically on container startup.
+## Architecture
 
-### Environment Variables
+Yantra uses a robust architecture designed for reliability and scalability:
 
-Copy `.env.docker` to `.env` and update the `DATABASE_URL` to match your database configuration.
+### Workflow Execution Model
 
-For Coolify deployments, set `DATABASE_URL` to use your PostgreSQL container name:
 ```
-DATABASE_URL="postgresql://postgres:password@<postgres-container-name>:5432/yantra"
+User Designs Workflow (WYSIWYG)
+         ↓
+Workflow Saved (JSON Definition)
+         ↓
+Trigger (Manual/Webhook/Schedule)
+         ↓
+Execution + Outbox (Single Transaction) ← Reliability Guarantee
+         ↓
+Job Queue (River)
+         ↓
+Worker Executes Nodes
+         ↓
+Results Stored with Checkpoints
 ```
 
-**Required for API migrations:**
-```bash
-# Generate a secure key
-openssl rand -hex 32
+### Key Design Principles
 
-# Add to .env
-MIGRATION_API_KEY=your-generated-key
-```
+**1. WYSIWYG Execution**
+- The visual workflow you design is exactly what executes
+- Node positions are visual-only; execution follows edges
+- No compilation or transformation steps
+- Immediate feedback on validation errors
 
-### Coolify Deployment
+**2. Transactional Outbox Pattern**
+- Every workflow trigger creates both an execution record AND an outbox message in a single database transaction
+- If the transaction commits, the workflow WILL execute (guaranteed)
+- Eliminates race conditions between database and queue
+- Provides at-least-once delivery semantics
 
-1. **Set environment variables in Coolify:**
-   - `DATABASE_URL` - PostgreSQL connection string
-   - `MIGRATION_API_KEY` - Secure random key for migrations
+**3. Fault Tolerance**
+- Every node execution is checkpointed in the database
+- Workflows can resume from the last successful node after failures
+- Context cancellation doesn't lose progress
+- Configurable retry policies
 
-2. **Deploy your application**
+**4. Resource Protection**
+- Maximum execution duration (30 minutes)
+- Maximum loop iterations (10,000)
+- Maximum data size limits (10MB)
+- Nested loop depth limits
 
-3. **Run migrations after deployment:**
-   ```bash
-   curl -X POST -H "X-Migration-Key: your-key" \
-     https://your-app.com/api/migration/run
-   ```
+For detailed architecture documentation, see:
+- [Workflow Architecture](./docs/WORKFLOW_ARCHITECTURE.md) - Complete workflow engine design
+- [Outbox Pattern](./docs/OUTBOX_ARCHITECTURE.md) - Reliability and guaranteed delivery
 
-You can automate step 3 using Coolify's post-deployment webhooks or scripts.
+## Node Types
+
+| Category | Node Type | Description |
+|----------|-----------|-------------|
+| **Control** | `start` | Workflow entry point |
+| | `end` | Workflow termination |
+| | `conditional` | Boolean branching logic |
+| | `delay` | Time-based pauses |
+| **Data** | `json` | Static/dynamic JSON data |
+| | `json-array` | Arrays with schema validation |
+| | `transform` | Map, extract, parse, stringify |
+| | `json_to_csv` | Convert JSON to CSV |
+| **Iteration** | `loop` | Iterate over arrays |
+| | `loop-accumulator` | Collect iteration results |
+| **Integration** | `http` | HTTP/REST API calls |
+| | `email` | Email with templates |
+| | `slack` | Slack notifications |
+
+## API Endpoints
+
+### Workflows
+- `GET /api/workflows` - List all workflows
+- `POST /api/workflows` - Create workflow
+- `GET /api/workflows/:id` - Get workflow details
+- `PUT /api/workflows/:id` - Update workflow
+- `DELETE /api/workflows/:id` - Delete workflow
+
+### Execution
+- `POST /api/workflows/:id/trigger` - Execute workflow
+- `GET /api/executions/:id` - Get execution details
+- `GET /api/executions/:id/nodes` - Get node execution history
+
+### Webhooks
+- `POST /webhook/:workflowId` - Trigger via webhook
+- `POST /webhook/:workflowId/:customPath` - Custom webhook path
 
 ## Testing
 
-Yantra has a comprehensive test suite including unit tests, integration tests, and regression tests.
-
-### Running Tests
+Yantra includes comprehensive testing:
 
 ```bash
 # Run all tests
 go test ./...
 
-# Run unit tests only (executors and services)
+# Unit tests only
 go test ./src/executors/... ./src/services/...
 
-# Run integration tests
+# Integration tests
 go test ./src/workflows/... -tags=integration
 
-# Run with coverage
+# With coverage
 go test -cover ./...
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-
-# Run specific test
-go test ./src/executors/ -run TestConditional
-
-# Verbose output
-go test -v ./...
 ```
 
-### Test Organization
+See [Test Strategy](./docs/TEST_STRATEGY.md) for detailed testing documentation.
 
-#### Unit Tests
-- **Executors**: Individual test files per node type in `src/executors/`
-  - `conditional_test.go` - Conditional node tests
-  - `delay_test.go` - Delay node tests
-  - `transform_test.go` - Transform node tests
-  - `loop_test.go` - Loop node tests
-  - `email_test.go` - Email node tests
-  - `http_test.go` - HTTP node tests
-  - `slack_test.go` - Slack node tests
-  - And more...
-- **Services**: Service-level tests in `src/services/`
-  - `auth_service_test.go` - Authentication tests
-  - `scheduler_service_test.go` - Scheduler tests
+## Configuration
 
-#### Integration Tests
-- **Location**: `src/workflows/integration_test.go`
-- **Purpose**: End-to-end workflow execution tests
-- **Test Data**: `src/workflows/testdata/`
-  - `workflows/` - Workflow JSON definitions
-  - `fixtures/` - Test input data
+### Environment Variables
 
-#### Test Fixtures
-Pre-built workflow definitions for regression testing:
-- `simple_transform.json` - Basic data transformation
-- `conditional_loop.json` - Conditional branching with loops
-- `data_aggregation.json` - Complex data processing pipeline
-- `error_handling.json` - Error propagation tests
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `PORT` | Server port | `3000` |
+| `JWT_SECRET` | JWT signing secret | Required |
+| `SMTP_HOST` | Email SMTP host | Optional |
+| `SMTP_PORT` | Email SMTP port | `587` |
+| `SMTP_USER` | Email username | Optional |
+| `SMTP_PASS` | Email password | Optional |
+| `MIGRATION_API_KEY` | API key for migration endpoint | Optional |
 
-### Test Strategy
+### Database Migrations
 
-See [TEST_STRATEGY.md](./TEST_STRATEGY.md) for detailed information about:
-- Test organization and structure
-- Integration test framework
-- Regression test workflows
-- Performance benchmarks
-- CI/CD integration guidelines
+Migrations run automatically on server startup. For production deployments with manual control:
 
-### Test Database Setup
+1. Generate a secure API key:
+```bash
+openssl rand -hex 32
+```
 
-Integration tests require a PostgreSQL database. Set the connection string:
+2. Set `MIGRATION_API_KEY` in environment
+
+3. Run migrations via API:
+```bash
+curl -X POST -H "X-Migration-Key: your-key" \
+  http://localhost:3000/api/migration/run
+```
+
+## Deployment
+
+### Docker
 
 ```bash
-export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/yantra_test?sslmode=disable"
+docker build -t yantra .
+docker run -p 3000:3000 \
+  -e DATABASE_URL="postgres://..." \
+  -e JWT_SECRET="your-secret" \
+  yantra
 ```
 
-Or use the default test database (same as above).
+### Coolify
 
-### Writing Tests
+1. Set environment variables in Coolify
+2. Deploy from Git repository
+3. Run migrations after deployment (if using manual migration mode)
 
-All new features and bug fixes should include:
-1. **Unit tests** for individual node executors
-2. **Integration tests** for multi-node workflows
-3. **Regression tests** for critical workflows
+### Production Checklist
 
-See `src/executors/test_helpers.go` for testing utilities.
+- [ ] Set strong `JWT_SECRET`
+- [ ] Configure `DATABASE_URL` for production database
+- [ ] Set `MIGRATION_API_KEY` for controlled migrations
+- [ ] Configure SMTP for email nodes
+- [ ] Set up SSL/TLS certificates
+- [ ] Configure reverse proxy (nginx/caddy)
+- [ ] Set up monitoring and alerts
+- [ ] Enable database backups
+- [ ] Configure log aggregation
+
+## Contributing
+
+We welcome contributions! Please see our contributing guidelines (coming soon).
+
+### Development Setup
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes
+4. Run tests: `go test ./...`
+5. Commit: `git commit -m 'Add amazing feature'`
+6. Push: `git push origin feature/amazing-feature`
+7. Open a Pull Request
+
+## Documentation
+
+- [Workflow Architecture](./docs/WORKFLOW_ARCHITECTURE.md) - Detailed workflow engine design
+- [Outbox Pattern](./docs/OUTBOX_ARCHITECTURE.md) - Reliability and messaging
+- [Test Strategy](./docs/TEST_STRATEGY.md) - Testing approach and guidelines
+- [API Documentation](./docs/API.md) - Coming soon
+- [Deployment Guide](./docs/DEPLOYMENT.md) - Coming soon
+
+## License
+
+[Add your license here]
+
+## Support
+
+- GitHub Issues: [Report bugs or request features](https://github.com/patali/yantra-server/issues)
+- Documentation: [Full documentation](./docs/)
+- Email: [Your contact email]
+
+---
+
+**Built with ❤️ for workflow automation**
