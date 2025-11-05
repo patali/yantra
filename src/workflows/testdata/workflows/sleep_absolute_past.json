@@ -1,0 +1,44 @@
+{
+  "name": "Sleep Node - Absolute Mode (Past Date)",
+  "description": "Tests sleep node behavior when target_date is in the past. Sleep should be skipped and workflow should continue immediately.",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Sleep (Past Date)",
+      "position": {"x": 300, "y": 100},
+      "config": {
+        "mode": "absolute",
+        "target_date": "2020-01-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Immediately After",
+      "position": {"x": 500, "y": 100},
+      "config": {
+        "data": {
+          "message": "Sleep was skipped - past date"
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 650, "y": 100}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "sleep-1"},
+    {"id": "e2", "source": "sleep-1", "target": "json-1"},
+    {"id": "e3", "source": "json-1", "target": "end-1"}
+  ]
+}

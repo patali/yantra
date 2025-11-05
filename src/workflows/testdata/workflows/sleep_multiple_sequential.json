@@ -1,0 +1,75 @@
+{
+  "name": "Sleep Node - Multiple Sequential Sleeps",
+  "description": "Tests workflow with multiple sleep nodes in sequence. Each sleep should be executed independently.",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Stage 1",
+      "position": {"x": 250, "y": 100},
+      "config": {
+        "data": {"stage": 1, "message": "Starting workflow"}
+      }
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Sleep 2 Seconds",
+      "position": {"x": 400, "y": 100},
+      "config": {
+        "mode": "relative",
+        "duration_value": 2,
+        "duration_unit": "seconds"
+      }
+    },
+    {
+      "id": "json-2",
+      "type": "json",
+      "label": "Stage 2",
+      "position": {"x": 550, "y": 100},
+      "config": {
+        "data": {"stage": 2, "message": "After first sleep"}
+      }
+    },
+    {
+      "id": "sleep-2",
+      "type": "sleep",
+      "label": "Sleep 2 Seconds",
+      "position": {"x": 700, "y": 100},
+      "config": {
+        "mode": "relative",
+        "duration_value": 2,
+        "duration_unit": "seconds"
+      }
+    },
+    {
+      "id": "json-3",
+      "type": "json",
+      "label": "Stage 3",
+      "position": {"x": 850, "y": 100},
+      "config": {
+        "data": {"stage": 3, "message": "After second sleep"}
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 1000, "y": 100}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "sleep-1"},
+    {"id": "e3", "source": "sleep-1", "target": "json-2"},
+    {"id": "e4", "source": "json-2", "target": "sleep-2"},
+    {"id": "e5", "source": "sleep-2", "target": "json-3"},
+    {"id": "e6", "source": "json-3", "target": "end-1"}
+  ]
+}
