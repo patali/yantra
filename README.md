@@ -98,11 +98,11 @@ Workflow Saved (JSON Definition)
          ↓
 Trigger (Manual/Webhook/Schedule)
          ↓
-Execution + Outbox (Single Transaction) ← Reliability Guarantee
-         ↓
-Job Queue (River)
+Execution Record Created → Job Queue (River)
          ↓
 Worker Executes Nodes
+         ↓
+Async Nodes → Outbox Pattern (email/Slack)
          ↓
 Results Stored with Checkpoints
 ```
@@ -116,10 +116,11 @@ Results Stored with Checkpoints
 - Immediate feedback on validation errors
 
 **2. Transactional Outbox Pattern**
-- Every workflow trigger creates both an execution record AND an outbox message in a single database transaction
-- If the transaction commits, the workflow WILL execute (guaranteed)
-- Eliminates race conditions between database and queue
-- Provides at-least-once delivery semantics
+- Async nodes (email, Slack) use the outbox pattern for reliable side-effect execution
+- Node execution and outbox message created in a single database transaction
+- Background worker processes outbox messages with retry logic
+- Provides at-least-once delivery for side effects
+- Workflow triggering uses direct River queue for immediate execution
 
 **3. Fault Tolerance**
 - Every node execution is checkpointed in the database
@@ -163,15 +164,26 @@ For detailed architecture documentation, see:
 - `GET /api/workflows/:id` - Get workflow details
 - `PUT /api/workflows/:id` - Update workflow
 - `DELETE /api/workflows/:id` - Delete workflow
+- `POST /api/workflows/:id/duplicate` - Duplicate workflow
 
 ### Execution
-- `POST /api/workflows/:id/trigger` - Execute workflow
-- `GET /api/executions/:id` - Get execution details
-- `GET /api/executions/:id/nodes` - Get node execution history
+- `POST /api/workflows/:id/execute` - Execute workflow
+- `POST /api/workflows/:id/executions/:executionId/resume` - Resume interrupted execution
+- `GET /api/workflows/:id/executions` - List workflow executions
+- `GET /api/workflows/:id/executions/:executionId` - Get execution details
+- `GET /api/workflows/:id/executions/:executionId/stream` - Stream execution updates (SSE)
+
+### Scheduling
+- `PUT /api/workflows/:id/schedule` - Update workflow schedule (cron)
+
+### Versioning
+- `GET /api/workflows/:id/versions` - Get version history
+- `POST /api/workflows/:id/versions/restore` - Restore previous version
 
 ### Webhooks
-- `POST /webhook/:workflowId` - Trigger via webhook
-- `POST /webhook/:workflowId/:customPath` - Custom webhook path
+- `POST /api/webhooks/:workflowId` - Trigger via webhook
+- `POST /api/webhooks/:workflowId/:path` - Custom webhook path
+- `POST /api/workflows/:id/webhook-secret/regenerate` - Regenerate webhook secret
 
 ## Testing
 

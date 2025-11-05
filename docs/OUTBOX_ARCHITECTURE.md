@@ -1,42 +1,55 @@
 # Outbox Pattern Architecture
 
-This document describes how Yantra implements the transactional outbox pattern to ensure reliable workflow execution with guaranteed message delivery.
+This document describes how Yantra implements the transactional outbox pattern to ensure reliable execution of **async nodes** (email, Slack) with guaranteed message delivery.
+
+## Important Note: Scope of Outbox Pattern
+
+**The outbox pattern in Yantra is used for async node execution (email/Slack), NOT for workflow triggering.**
+
+- **Workflow triggering**: Uses direct River queue insertion (synchronous, no outbox needed)
+- **Async nodes (email/Slack)**: Use outbox pattern for reliable side-effect execution
+
+This design ensures:
+- Workflows execute immediately without outbox overhead
+- Side-effect operations (email/Slack) have retry logic and guaranteed delivery
+- HTTP nodes execute synchronously so their output is available to downstream nodes
 
 ## Problem Statement
 
-Traditional job queue systems face a critical reliability issue:
+Async operations with side effects face a critical reliability issue:
 
 ```go
-// ❌ UNRELIABLE: Race condition between DB and queue
-func TriggerWorkflow(workflow) {
-    // 1. Save to database
-    execution := db.CreateExecution(workflow)
+// ❌ UNRELIABLE: Race condition between DB and side effect
+func ExecuteEmailNode(node) {
+    // 1. Save execution to database
+    execution := db.CreateNodeExecution(node)
 
-    // 💥 SYSTEM CRASH HERE = Job never queued!
+    // 💥 SYSTEM CRASH HERE = Email never sent!
 
-    // 2. Queue job
-    queue.Enqueue(execution.ID)
+    // 2. Send email
+    emailService.Send(node.config)
 }
 ```
 
 **Problems:**
-- If the system crashes between steps 1 and 2, the execution record exists but no job is queued
-- The workflow never executes
-- No automatic recovery
+- If the system crashes between steps 1 and 2, the node execution exists but email never sent
+- The side effect never happens
+- No automatic recovery or retry
 - Manual intervention required
 
 ## Solution: Transactional Outbox Pattern
 
-The outbox pattern ensures **exactly-once semantics** by:
-1. Writing both the execution record and the outbox message in a **single transaction**
-2. Using a separate processor to reliably move messages from outbox to queue
-3. Guaranteeing that if the execution exists, a job will eventually be queued
+The outbox pattern ensures **at-least-once delivery** for async operations by:
+1. Writing both the node execution record and the outbox message in a **single transaction**
+2. Using a separate processor to reliably execute side effects from the outbox queue
+3. Guaranteeing that if the node execution exists, the side effect will eventually be processed
 
 ## Architecture Overview
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│                     Application Layer                              │
+│                   Workflow Execution Engine                        │
+│                  (executing async node: email/Slack)               │
 └────────────┬───────────────────────────────────────────────────────┘
              │
              │ 1. Single Transaction
@@ -44,35 +57,36 @@ The outbox pattern ensures **exactly-once semantics** by:
 ┌────────────────────────────────────────────────────────────────────┐
 │                         Database                                   │
 │                                                                    │
-│  ┌──────────────────────┐      ┌─────────────────────────┐       │
-│  │ workflow_executions  │      │   outbox_messages       │       │
-│  │                      │      │                         │       │
-│  │ - id                 │      │ - id                    │       │
-│  │ - workflow_id        │◄─────┤ - aggregate_id          │       │
-│  │ - status: queued     │      │ - event_type            │       │
-│  │ - input_data         │      │ - payload               │       │
-│  │ - created_at         │      │ - status: pending       │       │
-│  └──────────────────────┘      │ - created_at            │       │
-│                                 └─────────────────────────┘       │
+│  ┌──────────────────────────┐      ┌─────────────────────────┐   │
+│  │ workflow_node_executions │      │   outbox_messages       │   │
+│  │                          │      │                         │   │
+│  │ - id                     │      │ - id                    │   │
+│  │ - execution_id           │◄─────┤ - node_execution_id     │   │
+│  │ - node_id                │      │ - event_type            │   │
+│  │ - node_type: email       │      │ - payload               │   │
+│  │ - status: pending        │      │ - status: pending       │   │
+│  │ - created_at             │      │ - created_at            │   │
+│  └──────────────────────────┘      │ - attempts: 0           │   │
+│                                     │ - max_attempts: 4       │   │
+│                                     └─────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────┘
              │
-             │ 2. Outbox Processor (Background)
+             │ 2. Outbox Worker (Background, polls every 1s)
              ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│                      River Job Queue                               │
+│                      Outbox Processor                              │
 │                                                                    │
 │  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  Job: execute_workflow                                       │ │
-│  │  - workflow_id                                               │ │
-│  │  - execution_id                                              │ │
-│  │  - input_data                                                │ │
+│  │  - Fetch pending messages                                    │ │
+│  │  - Execute side effect (send email, Slack message)           │ │
+│  │  - Mark as completed or retry with exponential backoff       │ │
 │  └──────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
              │
-             │ 3. River Worker
+             │ 3. Execute Side Effect
              ▼
 ┌────────────────────────────────────────────────────────────────────┐
-│                   Workflow Execution Engine                        │
+│              External Services (SMTP, Slack API)                   │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,279 +94,319 @@ The outbox pattern ensures **exactly-once semantics** by:
 
 ### 1. Outbox Message Table
 
-Stores messages to be processed:
+Stores async operations to be processed:
 
 ```sql
 CREATE TABLE outbox_messages (
-    id              UUID PRIMARY KEY,
-    aggregate_id    VARCHAR(255) NOT NULL,  -- execution_id
-    aggregate_type  VARCHAR(50) NOT NULL,   -- 'workflow_execution'
-    event_type      VARCHAR(50) NOT NULL,   -- 'workflow.triggered'
-    payload         JSONB NOT NULL,         -- Job details
-    status          VARCHAR(20) NOT NULL,   -- 'pending', 'processed', 'failed'
-    created_at      TIMESTAMP NOT NULL,
-    processed_at    TIMESTAMP
+    id                UUID PRIMARY KEY,
+    node_execution_id UUID NOT NULL,           -- References workflow_node_executions
+    event_type        VARCHAR(50) NOT NULL,    -- 'email.send', 'slack.send'
+    payload           JSONB NOT NULL,          -- Node config + input data
+    status            VARCHAR(20) NOT NULL,    -- 'pending', 'processing', 'completed', 'dead_letter'
+    attempts          INT NOT NULL DEFAULT 0,  -- Number of execution attempts
+    max_attempts      INT NOT NULL DEFAULT 4,  -- Maximum retry attempts (configurable per node)
+    created_at        TIMESTAMP NOT NULL,
+    processed_at      TIMESTAMP,
+    last_attempt_at   TIMESTAMP,
+    next_retry_at     TIMESTAMP,              -- When to retry next (exponential backoff)
+    last_error        TEXT,
+    idempotency_key   VARCHAR(255) UNIQUE
 );
 ```
 
 ### 2. Outbox Service
 
-Handles transactional writes:
+Handles transactional writes for async nodes:
 
 ```go
 type OutboxService struct {
     db *gorm.DB
 }
 
-// AddWorkflowExecution writes both execution and outbox message
-func (s *OutboxService) AddWorkflowExecution(
-    tx *gorm.DB,
-    execution *WorkflowExecution,
-    payload map[string]interface{},
-) error {
-    // Create execution record
-    if err := tx.Create(execution).Error; err != nil {
-        return err // Transaction will rollback
-    }
+// ExecuteNodeWithOutbox writes both node execution and outbox message atomically
+func (s *OutboxService) ExecuteNodeWithOutbox(
+    ctx context.Context,
+    executionID string,
+    accountID *string,
+    nodeID, nodeType string,
+    nodeConfig, input map[string]interface{},
+    eventType string,
+) (*WorkflowNodeExecution, *OutboxMessage, error) {
+    // Execute in a transaction
+    err := s.db.Transaction(func(tx *gorm.DB) error {
+        // Create node execution record
+        nodeExecution := &WorkflowNodeExecution{
+            ExecutionID: executionID,
+            NodeID:      nodeID,
+            NodeType:    nodeType,
+            Status:      "pending",
+            Input:       inputJSON,
+        }
+        if err := tx.Create(nodeExecution).Error; err != nil {
+            return err
+        }
 
-    // Create outbox message
-    message := &OutboxMessage{
-        AggregateID:   execution.ID,
-        AggregateType: "workflow_execution",
-        EventType:     "workflow.triggered",
-        Payload:       payload,
-        Status:        "pending",
-    }
+        // Create outbox message
+        message := &OutboxMessage{
+            NodeExecutionID: nodeExecution.ID,
+            EventType:       eventType,  // "email.send" or "slack.send"
+            Payload:         payloadJSON,
+            Status:          "pending",
+            Attempts:        0,
+            MaxAttempts:     maxRetries + 1,
+        }
+        if err := tx.Create(message).Error; err != nil {
+            return err
+        }
 
-    if err := tx.Create(message).Error; err != nil {
-        return err // Transaction will rollback
-    }
+        return nil
+    })
 
     // Both succeed or both fail atomically
-    return nil
+    return nodeExecution, message, err
 }
 ```
 
-### 3. Outbox Processor
+### 3. Outbox Worker
 
-Background worker that moves messages to River queue:
+Background worker that processes async messages directly:
 
 ```go
-func (s *OutboxService) ProcessPendingMessages(ctx context.Context) {
-    // Run every 1 second
-    ticker := time.NewTicker(1 * time.Second)
+type OutboxWorkerService struct {
+    outboxService   *OutboxService
+    executorFactory *executors.ExecutorFactory
+}
+
+func (w *OutboxWorkerService) Start(ctx context.Context) {
+    go w.run(ctx)
+}
+
+func (w *OutboxWorkerService) run(ctx context.Context) {
+    ticker := time.NewTicker(1 * time.Second)  // Poll every second
 
     for {
         select {
         case <-ctx.Done():
             return
         case <-ticker.C:
-            s.processBatch()
+            w.processBatch(ctx)
         }
     }
 }
 
-func (s *OutboxService) processBatch() {
-    // Get pending messages (oldest first)
-    var messages []OutboxMessage
-    s.db.Where("status = ?", "pending").
-        Order("created_at ASC").
-        Limit(100).
-        Find(&messages)
+func (w *OutboxWorkerService) processBatch(ctx context.Context) {
+    // Get pending messages ready for processing
+    messages, err := w.outboxService.GetPendingMessages(100)
+    if err != nil {
+        return
+    }
 
     for _, msg := range messages {
-        // Insert into River queue
-        if err := s.queueJob(msg); err != nil {
-            s.markFailed(msg.ID, err)
+        // Mark as processing
+        w.outboxService.MarkMessageProcessing(msg.ID)
+
+        // Parse payload and execute the side effect
+        var payload map[string]interface{}
+        json.Unmarshal([]byte(msg.Payload), &payload)
+
+        // Get the appropriate executor (email or Slack)
+        executor, err := w.executorFactory.GetExecutor(msg.NodeExecution.NodeType)
+        if err != nil {
+            w.outboxService.MarkMessageFailed(msg.ID, err.Error())
             continue
         }
 
-        // Mark as processed
-        s.markProcessed(msg.ID)
+        // Execute the side effect
+        result, err := executor.Execute(ctx, execContext)
+        if err != nil || !result.Success {
+            // Retry with exponential backoff or move to dead letter
+            w.outboxService.MarkMessageFailed(msg.ID, result.Error)
+            continue
+        }
+
+        // Mark as completed
+        w.outboxService.MarkMessageCompleted(msg.ID, result.Output)
     }
 }
 ```
 
-### 4. River Integration
-
-Job queue for workflow execution:
-
-```go
-type WorkflowExecutionArgs struct {
-    WorkflowID  string                 `json:"workflow_id"`
-    ExecutionID string                 `json:"execution_id"`
-    InputData   map[string]interface{} `json:"input_data"`
-    TriggerType string                 `json:"trigger_type"`
-}
-
-type WorkflowExecutionWorker struct {
-    river.WorkerDefaults[WorkflowExecutionArgs]
-    engineService *WorkflowEngineService
-}
-
-func (w *WorkflowExecutionWorker) Work(
-    ctx context.Context,
-    job *river.Job[WorkflowExecutionArgs],
-) error {
-    return w.engineService.ExecuteWorkflow(
-        ctx,
-        job.Args.WorkflowID,
-        job.Args.ExecutionID,
-        job.Args.InputData,
-        job.Args.TriggerType,
-    )
-}
-```
+**Key differences from workflow triggering:**
+- Outbox worker directly executes side effects (no River queue involved)
+- Polls every 1 second for pending messages
+- Handles retries with exponential backoff
+- Dead letter queue for permanently failed messages
 
 ## Reliability Guarantees
 
-### Exactly-Once Semantics
-
-**Problem:** Ensure each workflow executes exactly once, not zero times or multiple times.
-
-**Solution:**
-1. **Database Transaction**: Execution + Outbox written atomically
-2. **Idempotent Processing**: Check if message already processed
-3. **Unique Job IDs**: Prevent duplicate queueing
-
-```go
-func (s *OutboxService) queueJob(msg OutboxMessage) error {
-    // Use execution_id as unique job ID
-    jobID := msg.AggregateID
-
-    // River deduplicates jobs with same ID
-    _, err := s.riverClient.InsertTx(ctx, tx, &WorkflowExecutionArgs{
-        ExecutionID: msg.AggregateID,
-        // ... other args
-    }, &river.InsertOpts{
-        UniqueOpts: river.UniqueOpts{
-            ByArgs: true,
-        },
-    })
-
-    return err
-}
-```
-
 ### At-Least-Once Delivery
 
-**Guarantee:** Every execution will eventually be queued and executed.
+**Guarantee:** Every async operation (email/Slack) will eventually be executed.
 
 **How:**
-1. Outbox processor runs continuously
-2. Retries failed messages
+1. Outbox worker polls continuously (every 1 second)
+2. Retries failed messages with exponential backoff
 3. Processes messages in order
 4. No message loss (persisted in database)
 
-### Failure Recovery
+### Idempotency Protection
 
-**Scenario 1: App crashes after DB write, before queue**
+**Problem:** Prevent duplicate emails/Slack messages on retry.
+
+**Solution:**
+1. **Idempotency Key**: Unique key per node execution prevents duplicates
+2. **External Service Idempotency**: Email/Slack services should handle duplicate requests
+3. **Status Tracking**: Messages marked as "processing" to prevent concurrent execution
+
+```go
+// Idempotency key format: {execution_id}-{node_id}-{uuid}
+idempotencyKey := fmt.Sprintf("%s-%s-%s", executionID, nodeID, uuid.New())
+
+message := &OutboxMessage{
+    IdempotencyKey: idempotencyKey,  // Unique constraint in DB
+    Status:         "pending",
+}
 ```
-✅ Execution exists in DB
+
+### Retry Strategy with Exponential Backoff
+
+**Configuration:**
+- Default max attempts: 4 (configurable per node via `maxRetries`)
+- Backoff schedule: 2min, 4min, 8min (capped at 1 hour)
+- After max attempts: Move to dead letter queue
+
+**Retry Logic:**
+```go
+// Calculate backoff: 2^attempts minutes
+retryDelay := time.Duration(1<<uint(attempts)) * time.Minute
+if retryDelay > time.Hour {
+    retryDelay = time.Hour
+}
+nextRetry := time.Now().Add(retryDelay)
+```
+
+### Failure Recovery Scenarios
+
+**Scenario 1: App crashes after DB write, before side effect**
+```
+✅ Node execution exists in DB
 ✅ Outbox message exists
-✅ On restart, processor queues the message
-✅ Workflow executes successfully
+✅ On restart, worker processes the message
+✅ Side effect executes successfully
 ```
 
-**Scenario 2: Queue unavailable**
+**Scenario 2: External service temporarily unavailable**
 ```
 ✅ Outbox message remains "pending"
-✅ Processor retries on next iteration
-✅ Message eventually queued when queue recovers
+✅ Worker retries with exponential backoff
+✅ Message eventually succeeds when service recovers
 ```
 
-**Scenario 3: Database transaction fails**
+**Scenario 3: Permanent failure (max retries exceeded)**
 ```
-✅ Both execution and outbox rolled back
+✅ Message moved to dead letter queue
+✅ Node execution marked as "error"
+✅ Workflow execution marked as "partially_failed" or "error"
+✅ Admin can manually retry from dead letter queue
+```
+
+**Scenario 4: Database transaction fails**
+```
+✅ Both node execution and outbox rolled back
 ✅ No orphaned records
-✅ Client receives error, can retry
+✅ Workflow continues to next node
 ```
 
 ## Processing Flow
 
-### 1. Workflow Trigger
+### 1. Async Node Execution (During Workflow)
 
 ```go
-// API Handler
-func (c *WorkflowController) TriggerWorkflow(w http.ResponseWriter, r *http.Request) {
-    // Start transaction
-    tx := c.db.Begin()
-    defer func() {
-        if r := recover(); r != nil {
-            tx.Rollback()
-        }
-    }()
+// Workflow Engine - encountering async node (email/Slack)
+func (s *WorkflowEngineService) executeNode(ctx context.Context, nodeID string) error {
+    nodeType := getNodeType(nodeID)
 
-    // Create execution
-    execution := &WorkflowExecution{
-        WorkflowID: workflowID,
-        Status:     "queued",
-        InputData:  inputData,
+    // Check if node requires outbox pattern
+    if executors.NodeRequiresOutbox(nodeType) {
+        // Use outbox pattern for email/Slack nodes
+        return s.executeNodeWithOutbox(ctx, executionID, nodeID, nodeType, config, input)
     }
 
-    // Add to outbox (single transaction)
-    if err := c.outboxService.AddWorkflowExecution(tx, execution, payload); err != nil {
-        tx.Rollback()
+    // Execute synchronously for other nodes (HTTP, transform, etc.)
+    return s.executeSynchronousNode(ctx, executionID, nodeID, nodeType, config, input)
+}
+
+func (s *WorkflowEngineService) executeNodeWithOutbox(...) error {
+    // Create node execution and outbox message atomically
+    nodeExecution, outboxMessage, err := s.outboxService.ExecuteNodeWithOutbox(
+        ctx, executionID, accountID, nodeID, nodeType, config, input, "email.send",
+    )
+
+    if err != nil {
         return err
     }
 
-    // Commit transaction
-    if err := tx.Commit().Error; err != nil {
-        return err
-    }
-
-    // ✅ At this point, workflow WILL execute
-    return execution.ID
+    log.Printf("📬 Node %s queued for outbox processing", nodeID)
+    // Workflow continues to next node immediately
+    // Email will be sent asynchronously by outbox worker
+    return nil
 }
 ```
 
-### 2. Outbox Processing
+### 2. Outbox Worker Processing
 
 ```go
-// Background processor
-func (s *OutboxService) processBatch() {
-    messages := s.getPendingMessages()
+// Background worker (runs every 1 second)
+func (w *OutboxWorkerService) processBatch(ctx context.Context) {
+    // Get pending messages
+    messages, _ := w.outboxService.GetPendingMessages(100)
 
     for _, msg := range messages {
-        // Parse payload
-        var args WorkflowExecutionArgs
-        json.Unmarshal(msg.Payload, &args)
+        // Mark as processing (prevents concurrent execution)
+        w.outboxService.MarkMessageProcessing(msg.ID)
 
-        // Queue job
-        job, err := s.riverClient.Insert(ctx, &args, nil)
-        if err != nil {
-            log.Printf("Failed to queue job: %v", err)
-            s.incrementRetryCount(msg.ID)
+        // Parse payload
+        var payload map[string]interface{}
+        json.Unmarshal([]byte(msg.Payload), &payload)
+
+        // Get executor and execute side effect
+        executor, _ := w.executorFactory.GetExecutor(msg.NodeExecution.NodeType)
+        result, err := executor.Execute(ctx, execContext)
+
+        if err != nil || !result.Success {
+            // Retry with exponential backoff or move to dead letter
+            w.outboxService.MarkMessageFailed(msg.ID, result.Error)
             continue
         }
 
-        // Mark as processed
-        s.db.Model(&OutboxMessage{}).
-            Where("id = ?", msg.ID).
-            Updates(map[string]interface{}{
-                "status":       "processed",
-                "processed_at": time.Now(),
-            })
+        // Mark as completed
+        w.outboxService.MarkMessageCompleted(msg.ID, result.Output)
     }
 }
 ```
 
-### 3. Job Execution
+### 3. Side Effect Execution
 
 ```go
-// River worker
-func (w *WorkflowExecutionWorker) Work(ctx context.Context, job *river.Job[WorkflowExecutionArgs]) error {
-    // Execute workflow
-    err := w.engineService.ExecuteWorkflow(
-        ctx,
-        job.Args.WorkflowID,
-        job.Args.ExecutionID,
-        job.Args.InputData,
-        job.Args.TriggerType,
-    )
+// Email Executor
+func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*ExecutionResult, error) {
+    // Extract config
+    to := execCtx.NodeConfig["to"].(string)
+    subject := execCtx.NodeConfig["subject"].(string)
+    body := execCtx.NodeConfig["body"].(string)
 
-    // If error, River will retry based on retry policy
-    return err
+    // Send email via SMTP
+    err := e.emailService.SendEmail(to, subject, body)
+    if err != nil {
+        return &ExecutionResult{
+            Success: false,
+            Error:   err.Error(),
+        }, err
+    }
+
+    return &ExecutionResult{
+        Success: true,
+        Output:  map[string]interface{}{"sent": true, "to": to},
+    }, nil
 }
 ```
 
@@ -442,56 +496,75 @@ ON outbox_messages(aggregate_id, aggregate_type);
 
 ## Comparison with Alternatives
 
-### Direct Queue Insertion
+### Direct Side Effect Execution (Synchronous)
 
 ```go
-// ❌ NOT RELIABLE
-db.Create(execution)
-queue.Enqueue(job) // Can fail after DB commit
+// ❌ NOT RELIABLE for side effects
+func ExecuteEmailNode(node) {
+    db.CreateNodeExecution(node)
+    emailService.Send(...)  // Can fail after DB commit
+}
 ```
 
 **Problems:**
-- No atomicity
-- Can lose jobs
-- No automatic recovery
+- No atomicity between DB write and side effect
+- Can lose messages if process crashes
+- No automatic retry
+- Blocks workflow execution
 
-### Two-Phase Commit
+### Immediate Queue Insertion
 
 ```go
-// ❌ COMPLEX & SLOW
-tx1 := db.Begin()
-tx2 := queue.Begin()
-// ... commit both ...
+// ⚠️ BETTER but still has issues
+func ExecuteEmailNode(node) {
+    db.CreateNodeExecution(node)
+    queue.Enqueue(emailJob)  // Separate system, can fail
+}
 ```
 
 **Problems:**
-- Complex implementation
-- Performance overhead
-- Requires 2PC support in queue
+- Two separate systems (DB + Queue)
+- Race condition if crash between steps
+- Requires queue to be always available
+- No built-in retry logic
 
 ### Outbox Pattern (Yantra's Approach)
 
 ```go
 // ✅ RELIABLE & SIMPLE
-tx.Create(execution)
+tx := db.Begin()
+tx.Create(nodeExecution)
 tx.Create(outboxMessage)
 tx.Commit()
+// Worker processes outbox messages asynchronously
 ```
 
 **Benefits:**
-- ✅ Single database transaction
-- ✅ Guaranteed delivery
-- ✅ Simple implementation
-- ✅ Observable and debuggable
-- ✅ Automatic recovery
+- ✅ Single database transaction (atomic)
+- ✅ Guaranteed delivery (at-least-once)
+- ✅ Simple implementation (no external queue needed)
+- ✅ Observable and debuggable (all messages in DB)
+- ✅ Automatic recovery (worker polls continuously)
+- ✅ Built-in retry with exponential backoff
+- ✅ Dead letter queue for failed messages
+- ✅ Non-blocking for workflow execution
+
+## Current Features
+
+✅ **Dead Letter Queue**: Permanently failed messages automatically moved to dead letter status
+✅ **Retry Logic**: Exponential backoff with configurable max attempts
+✅ **Idempotency**: Unique keys prevent duplicate processing
+✅ **Account Isolation**: Messages filtered by account for multi-tenancy
+✅ **Manual Retry**: Dead letter messages can be manually retried via API
 
 ## Future Enhancements
 
-1. **Dead Letter Queue**: Move permanently failed messages
-2. **Metrics Dashboard**: Visualize outbox health
-3. **Message Partitioning**: Shard by account for scale
-4. **Compression**: Reduce payload size
-5. **Archive Old Messages**: Clean up processed messages
+1. **Metrics Dashboard**: Visualize outbox health and processing rates
+2. **Message Partitioning**: Shard by account for horizontal scaling
+3. **Compression**: Reduce payload size for large messages
+4. **Archive Old Messages**: Clean up processed/completed messages
+5. **Priority Queue**: Priority-based message processing
+6. **Batch Processing**: Send multiple emails in a single SMTP connection
 
 ---
 

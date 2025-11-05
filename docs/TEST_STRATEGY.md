@@ -68,31 +68,33 @@ src/workflows/
 
 **Integration Test Scenarios:**
 
-#### Basic Workflows
-1. **Simple Transform Pipeline**
+#### Implemented Workflows ✅
+1. **Simple Transform Pipeline** (`simple_transform.json`)
    - JSON → Transform → Output
    - Tests: Data transformation, field mapping
 
-2. **Conditional Branching**
-   - JSON → Conditional → Transform (2 paths)
-   - Tests: Branch selection, data flow
+2. **Conditional Loop** (`conditional_loop.json`)
+   - JSON Array → Loop → Conditional → Transform
+   - Tests: Branch selection, iteration, data flow
 
-3. **Loop Processing**
-   - JSON Array → Loop → Transform → Accumulator
-   - Tests: Iteration, accumulation, max limits
+3. **Data Aggregation** (`data_aggregation.json`)
+   - JSON → Transform → Loop → Accumulator
+   - Tests: Iteration, accumulation, data collection
 
-#### Complex Workflows
-4. **HTTP Integration Pipeline**
-   - HTTP Request → Transform → Conditional → Email/Slack
-   - Tests: External API calls, error handling
-
-5. **Data Processing Pipeline**
-   - JSON → Transform → Loop → JSON to CSV
-   - Tests: Complex data manipulation
-
-6. **Error Handling**
+4. **Error Handling** (`error_handling.json`)
    - Invalid Input → Node Failure → Error Propagation
    - Tests: Graceful degradation, error messages
+
+#### Workflows Not Yet Implemented
+5. **HTTP Integration Pipeline**
+   - HTTP Request → Transform → Conditional → Email/Slack
+   - Tests: External API calls, error handling
+   - Status: Planned
+
+6. **Complex CSV Pipeline**
+   - JSON → Transform → Loop → JSON to CSV
+   - Tests: Complex data manipulation, CSV export
+   - Status: Planned
 
 #### Edge Cases
 7. **Large Data Processing**
@@ -175,27 +177,27 @@ func BenchmarkJSONToCSVExecutor_LargeDataset(b *testing.B)
 
 ### Phase 1: Reorganize Unit Tests (Priority: High)
 - [x] Analyze current test structure
-- [ ] Create `test_helpers.go` with shared utilities
-- [ ] Split `executors_test.go` into individual files:
-  - [ ] `conditional_test.go`
-  - [ ] `delay_test.go`
-  - [ ] `transform_test.go`
-  - [ ] `loop_test.go`
-  - [ ] `loop_accumulator_test.go`
-  - [ ] `json_array_test.go`
-  - [ ] `json_to_csv_test.go`
-  - [ ] `http_test.go`
-  - [ ] `email_test.go`
-  - [ ] `slack_test.go`
-- [ ] Verify all tests still pass
-- [ ] Remove original `executors_test.go`
+- [x] Create `test_helpers.go` with shared utilities
+- [x] Split `executors_test.go` into individual files:
+  - [x] `conditional_test.go`
+  - [x] `delay_test.go`
+  - [x] `transform_test.go`
+  - [x] `loop_test.go`
+  - [x] `loop_accumulator_test.go`
+  - [x] `json_array_test.go`
+  - [x] `json_to_csv_test.go`
+  - [x] `http_test.go`
+  - [x] `email_test.go`
+  - [x] `slack_test.go`
+- [x] Verify all tests still pass
+- [x] Remove original `executors_test.go`
 
 ### Phase 2: Create Integration Test Framework (Priority: High)
-- [ ] Design integration test structure
-- [ ] Create `src/workflows/integration_test.go`
-- [ ] Set up test database and cleanup utilities
-- [ ] Implement workflow execution test harness
-- [ ] Add basic integration tests (3-4 workflows)
+- [x] Design integration test structure
+- [x] Create `src/workflows/integration_test.go`
+- [x] Set up test database and cleanup utilities
+- [x] Implement workflow execution test harness
+- [x] Add basic integration tests (4 workflows)
 
 ### Phase 3: Add Regression Test Workflows (Priority: Medium)
 - [ ] Design 6 real-world workflow scenarios
@@ -324,4 +326,4 @@ jobs:
 ---
 
 **Last Updated**: 2025-11-05
-**Status**: Implementation In Progress
+**Status**: Phase 1 & 2 Complete ✅ | Phase 3 & 4 Planned
