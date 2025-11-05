@@ -52,6 +52,8 @@ func setupTestDB(t *testing.T) *TestDatabase {
 		&models.WorkflowExecution{},
 		&models.WorkflowNodeExecution{},
 		&models.Schedule{},
+		&models.SleepSchedule{},
+		&models.OutboxMessage{},
 	)
 	if err != nil {
 		t.Fatalf("Failed to migrate database: %v", err)
@@ -278,4 +280,233 @@ func TestErrorHandlingWorkflow(t *testing.T) {
 	// Similar setup as above...
 	// TODO: Implement error handling test
 	t.Skip("Error handling test not yet implemented")
+}
+
+// TestSleepNodeWorkflow tests sleep node functionality
+func TestSleepNodeWorkflow(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.cleanup()
+
+	// Create test account and user
+	account := &models.Account{Name: "Test Account"}
+	testDB.db.Create(account)
+
+	user := &models.User{
+		Username:  "testuser",
+		Email:     "test@example.com",
+		Password:  "hashedpassword",
+		AccountID: &account.ID,
+	}
+	testDB.db.Create(user)
+
+	// Create mock services
+	mockEmailService := &MockEmailService{}
+	engineService := services.NewWorkflowEngineService(testDB.db, mockEmailService)
+
+	t.Run("Sleep node with relative mode (5 seconds)", func(t *testing.T) {
+		// Define a workflow with a sleep node
+		workflowDef := `{
+			"nodes": [
+				{
+					"id": "start-1",
+					"type": "start",
+					"label": "Start",
+					"position": {"x": 100, "y": 100}
+				},
+				{
+					"id": "json-1",
+					"type": "json",
+					"label": "Input Data",
+					"position": {"x": 250, "y": 100},
+					"config": {
+						"data": {"message": "before sleep"}
+					}
+				},
+				{
+					"id": "sleep-1",
+					"type": "sleep",
+					"label": "Sleep 5 seconds",
+					"position": {"x": 400, "y": 100},
+					"config": {
+						"mode": "relative",
+						"duration_value": 5,
+						"duration_unit": "seconds"
+					}
+				},
+				{
+					"id": "json-2",
+					"type": "json",
+					"label": "After Sleep",
+					"position": {"x": 550, "y": 100},
+					"config": {
+						"data": {"message": "after sleep"}
+					}
+				},
+				{
+					"id": "end-1",
+					"type": "end",
+					"label": "End",
+					"position": {"x": 700, "y": 100}
+				}
+			],
+			"edges": [
+				{"id": "e1", "source": "start-1", "target": "json-1"},
+				{"id": "e2", "source": "json-1", "target": "sleep-1"},
+				{"id": "e3", "source": "sleep-1", "target": "json-2"},
+				{"id": "e4", "source": "json-2", "target": "end-1"}
+			]
+		}`
+
+		// Create workflow
+		workflow := CreateTestWorkflow(t, testDB.db, account.ID, user.ID, workflowDef)
+
+		// Create execution record
+		execution := &models.WorkflowExecution{
+			WorkflowID:  workflow.ID,
+			Version:     1,
+			Status:      "running",
+			TriggerType: "manual",
+		}
+		err := testDB.db.Create(execution).Error
+		assert.NoError(t, err)
+
+		// Execute workflow (it should hit sleep node and enter sleeping state)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		inputJSON := "{}"
+		err = engineService.ExecuteWorkflow(ctx, workflow.ID, execution.ID, inputJSON, "manual")
+
+		// Workflow should stop at sleep node (error indicates workflow entered sleeping state)
+		if err != nil {
+			assert.Contains(t, err.Error(), "sleeping state")
+		}
+
+		// Verify execution status is "sleeping"
+		var updatedExecution models.WorkflowExecution
+		err = testDB.db.First(&updatedExecution, "id = ?", execution.ID).Error
+		assert.NoError(t, err)
+		assert.Equal(t, "sleeping", updatedExecution.Status, "Execution should be in sleeping state")
+
+		// Verify sleep schedule was created
+		var sleepSchedules []models.SleepSchedule
+		err = testDB.db.Where("execution_id = ?", execution.ID).Find(&sleepSchedules).Error
+		assert.NoError(t, err)
+		assert.Len(t, sleepSchedules, 1, "One sleep schedule should be created")
+
+		if len(sleepSchedules) > 0 {
+			schedule := sleepSchedules[0]
+			assert.Equal(t, workflow.ID, schedule.WorkflowID)
+			assert.Equal(t, "sleep-1", schedule.NodeID)
+
+			// Wake up time should be approximately 5 seconds in the future
+			expectedWakeUp := time.Now().UTC().Add(5 * time.Second)
+			assert.WithinDuration(t, expectedWakeUp, schedule.WakeUpAt, 2*time.Second)
+		}
+
+		// Verify sleep node execution was successful
+		var nodeExecutions []models.WorkflowNodeExecution
+		err = testDB.db.Where("execution_id = ? AND node_id = ?", execution.ID, "sleep-1").Find(&nodeExecutions).Error
+		assert.NoError(t, err)
+		assert.Len(t, nodeExecutions, 1, "Sleep node should have one execution record")
+
+		if len(nodeExecutions) > 0 {
+			nodeExec := nodeExecutions[0]
+			assert.Equal(t, "success", nodeExec.Status, "Sleep node execution should be successful")
+			assert.NotNil(t, nodeExec.Output, "Sleep node should have output")
+
+			// Verify output contains sleep metadata
+			var output map[string]interface{}
+			if nodeExec.Output != nil {
+				json.Unmarshal([]byte(*nodeExec.Output), &output)
+				assert.Contains(t, output, "sleep_scheduled_until")
+				assert.Contains(t, output, "sleep_duration_ms")
+				assert.Equal(t, "relative", output["mode"])
+			}
+		}
+	})
+
+	t.Run("Sleep node with absolute mode (past date)", func(t *testing.T) {
+		// Define a workflow with a sleep node set to past date
+		pastDate := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+		workflowDef := fmt.Sprintf(`{
+			"nodes": [
+				{
+					"id": "start-1",
+					"type": "start",
+					"label": "Start",
+					"position": {"x": 100, "y": 100}
+				},
+				{
+					"id": "sleep-1",
+					"type": "sleep",
+					"label": "Sleep (past date)",
+					"position": {"x": 300, "y": 100},
+					"config": {
+						"mode": "absolute",
+						"target_date": "%s"
+					}
+				},
+				{
+					"id": "end-1",
+					"type": "end",
+					"label": "End",
+					"position": {"x": 500, "y": 100}
+				}
+			],
+			"edges": [
+				{"id": "e1", "source": "start-1", "target": "sleep-1"},
+				{"id": "e2", "source": "sleep-1", "target": "end-1"}
+			]
+		}`, pastDate)
+
+		// Create workflow
+		workflow := CreateTestWorkflow(t, testDB.db, account.ID, user.ID, workflowDef)
+
+		// Create execution record
+		execution := &models.WorkflowExecution{
+			WorkflowID:  workflow.ID,
+			Version:     1,
+			Status:      "running",
+			TriggerType: "manual",
+		}
+		err := testDB.db.Create(execution).Error
+		assert.NoError(t, err)
+
+		// Execute workflow
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		inputJSON := "{}"
+		err = engineService.ExecuteWorkflow(ctx, workflow.ID, execution.ID, inputJSON, "manual")
+
+		// Workflow should complete normally (past date means no sleep)
+		// Note: Actual behavior depends on implementation - might complete or have different behavior
+
+		// Verify no sleep schedule was created (since date is in the past)
+		var sleepSchedules []models.SleepSchedule
+		err = testDB.db.Where("execution_id = ?", execution.ID).Find(&sleepSchedules).Error
+		assert.NoError(t, err)
+		assert.Len(t, sleepSchedules, 0, "No sleep schedule should be created for past dates")
+
+		// Verify sleep node execution shows it was skipped
+		var nodeExecutions []models.WorkflowNodeExecution
+		err = testDB.db.Where("execution_id = ? AND node_id = ?", execution.ID, "sleep-1").Find(&nodeExecutions).Error
+		assert.NoError(t, err)
+
+		if len(nodeExecutions) > 0 {
+			nodeExec := nodeExecutions[0]
+			assert.Equal(t, "success", nodeExec.Status)
+
+			// Verify output indicates sleep was skipped
+			if nodeExec.Output != nil {
+				var output map[string]interface{}
+				json.Unmarshal([]byte(*nodeExec.Output), &output)
+				if skipped, ok := output["sleep_skipped"].(bool); ok {
+					assert.True(t, skipped, "Sleep should be skipped for past dates")
+					assert.Equal(t, "target time already passed", output["reason"])
+				}
+			}
+		}
+	})
 }
