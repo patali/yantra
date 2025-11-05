@@ -1,0 +1,88 @@
+{
+  "name": "Conditional Loop Workflow",
+  "description": "Tests conditional branching with loop processing",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 200}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Input Array",
+      "position": {"x": 250, "y": 200},
+      "config": {
+        "data": [
+          {"name": "Alice", "age": 25, "active": true},
+          {"name": "Bob", "age": 17, "active": true},
+          {"name": "Charlie", "age": 30, "active": false},
+          {"name": "Diana", "age": 22, "active": true}
+        ]
+      }
+    },
+    {
+      "id": "loop-1",
+      "type": "loop",
+      "label": "Process Users",
+      "position": {"x": 400, "y": 200},
+      "config": {
+        "itemVariable": "user",
+        "indexVariable": "index"
+      }
+    },
+    {
+      "id": "conditional-1",
+      "type": "conditional",
+      "label": "Check Adult & Active",
+      "position": {"x": 550, "y": 200},
+      "config": {
+        "condition": "user.age >= 18 && user.active == true"
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Format User (True Branch)",
+      "position": {"x": 700, "y": 150},
+      "config": {
+        "operations": [
+          {
+            "type": "map",
+            "config": {
+              "mappings": {
+                "name": "fullName",
+                "age": "userAge"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "transform-2",
+      "type": "transform",
+      "label": "Skip User (False Branch)",
+      "position": {"x": 700, "y": 250},
+      "config": {
+        "operations": []
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 850, "y": 200}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "loop-1"},
+    {"id": "e3", "source": "loop-1", "target": "conditional-1"},
+    {"id": "e4", "source": "conditional-1", "target": "transform-1", "label": "true"},
+    {"id": "e5", "source": "conditional-1", "target": "transform-2", "label": "false"},
+    {"id": "e6", "source": "transform-1", "target": "end-1"},
+    {"id": "e7", "source": "transform-2", "target": "end-1"}
+  ]
+}

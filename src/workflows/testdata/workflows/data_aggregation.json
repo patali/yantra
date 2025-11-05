@@ -1,0 +1,83 @@
+{
+  "name": "Data Aggregation Pipeline",
+  "description": "Processes array data and converts to CSV",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 150}
+    },
+    {
+      "id": "json-array-1",
+      "type": "json-array",
+      "label": "Input Data Array",
+      "position": {"x": 250, "y": 150},
+      "config": {
+        "jsonArray": "[{\"product\":\"Widget\",\"quantity\":10,\"price\":25.50},{\"product\":\"Gadget\",\"quantity\":5,\"price\":45.00},{\"product\":\"Doohickey\",\"quantity\":15,\"price\":12.75}]",
+        "validateSchema": true
+      }
+    },
+    {
+      "id": "loop-1",
+      "type": "loop",
+      "label": "Process Items",
+      "position": {"x": 400, "y": 150},
+      "config": {
+        "itemVariable": "item",
+        "indexVariable": "idx"
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Calculate Total",
+      "position": {"x": 550, "y": 150},
+      "config": {
+        "operations": [
+          {
+            "type": "map",
+            "config": {
+              "mappings": {
+                "product": "product_name",
+                "quantity": "qty",
+                "price": "unit_price"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "loop-accumulator-1",
+      "type": "loop-accumulator",
+      "label": "Accumulate Results",
+      "position": {"x": 700, "y": 150},
+      "config": {
+        "accumulatorVariable": "results",
+        "accumulationMode": "array"
+      }
+    },
+    {
+      "id": "json-to-csv-1",
+      "type": "json_to_csv",
+      "label": "Convert to CSV",
+      "position": {"x": 850, "y": 150},
+      "config": {}
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 1000, "y": 150}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-array-1"},
+    {"id": "e2", "source": "json-array-1", "target": "loop-1"},
+    {"id": "e3", "source": "loop-1", "target": "transform-1"},
+    {"id": "e4", "source": "transform-1", "target": "loop-accumulator-1"},
+    {"id": "e5", "source": "loop-accumulator-1", "target": "json-to-csv-1"},
+    {"id": "e6", "source": "json-to-csv-1", "target": "end-1"}
+  ]
+}

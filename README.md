@@ -103,3 +103,89 @@ MIGRATION_API_KEY=your-generated-key
    ```
 
 You can automate step 3 using Coolify's post-deployment webhooks or scripts.
+
+## Testing
+
+Yantra has a comprehensive test suite including unit tests, integration tests, and regression tests.
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run unit tests only (executors and services)
+go test ./src/executors/... ./src/services/...
+
+# Run integration tests
+go test ./src/workflows/... -tags=integration
+
+# Run with coverage
+go test -cover ./...
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
+# Run specific test
+go test ./src/executors/ -run TestConditional
+
+# Verbose output
+go test -v ./...
+```
+
+### Test Organization
+
+#### Unit Tests
+- **Executors**: Individual test files per node type in `src/executors/`
+  - `conditional_test.go` - Conditional node tests
+  - `delay_test.go` - Delay node tests
+  - `transform_test.go` - Transform node tests
+  - `loop_test.go` - Loop node tests
+  - `email_test.go` - Email node tests
+  - `http_test.go` - HTTP node tests
+  - `slack_test.go` - Slack node tests
+  - And more...
+- **Services**: Service-level tests in `src/services/`
+  - `auth_service_test.go` - Authentication tests
+  - `scheduler_service_test.go` - Scheduler tests
+
+#### Integration Tests
+- **Location**: `src/workflows/integration_test.go`
+- **Purpose**: End-to-end workflow execution tests
+- **Test Data**: `src/workflows/testdata/`
+  - `workflows/` - Workflow JSON definitions
+  - `fixtures/` - Test input data
+
+#### Test Fixtures
+Pre-built workflow definitions for regression testing:
+- `simple_transform.json` - Basic data transformation
+- `conditional_loop.json` - Conditional branching with loops
+- `data_aggregation.json` - Complex data processing pipeline
+- `error_handling.json` - Error propagation tests
+
+### Test Strategy
+
+See [TEST_STRATEGY.md](./TEST_STRATEGY.md) for detailed information about:
+- Test organization and structure
+- Integration test framework
+- Regression test workflows
+- Performance benchmarks
+- CI/CD integration guidelines
+
+### Test Database Setup
+
+Integration tests require a PostgreSQL database. Set the connection string:
+
+```bash
+export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/yantra_test?sslmode=disable"
+```
+
+Or use the default test database (same as above).
+
+### Writing Tests
+
+All new features and bug fixes should include:
+1. **Unit tests** for individual node executors
+2. **Integration tests** for multi-node workflows
+3. **Regression tests** for critical workflows
+
+See `src/executors/test_helpers.go` for testing utilities.
