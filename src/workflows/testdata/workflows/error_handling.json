@@ -1,0 +1,69 @@
+{
+  "name": "Error Handling Workflow",
+  "description": "Tests error handling and propagation",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 150}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Valid Data",
+      "position": {"x": 250, "y": 150},
+      "config": {
+        "data": {"status": "ok", "value": 100}
+      }
+    },
+    {
+      "id": "conditional-1",
+      "type": "conditional",
+      "label": "Check Status",
+      "position": {"x": 400, "y": 150},
+      "config": {
+        "condition": "input.status == \"ok\""
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Success Path",
+      "position": {"x": 550, "y": 100},
+      "config": {
+        "operations": [
+          {
+            "type": "map",
+            "config": {
+              "mappings": {
+                "value": "result"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "json-2",
+      "type": "json",
+      "label": "Error Path (Missing Data)",
+      "position": {"x": 550, "y": 200},
+      "config": {}
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 700, "y": 150}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "conditional-1"},
+    {"id": "e3", "source": "conditional-1", "target": "transform-1", "label": "true"},
+    {"id": "e4", "source": "conditional-1", "target": "json-2", "label": "false"},
+    {"id": "e5", "source": "transform-1", "target": "end-1"},
+    {"id": "e6", "source": "json-2", "target": "end-1"}
+  ]
+}

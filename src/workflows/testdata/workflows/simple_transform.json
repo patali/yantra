@@ -1,0 +1,56 @@
+{
+  "name": "Simple Transform Workflow",
+  "description": "Tests basic data transformation",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Input Data",
+      "position": {"x": 250, "y": 100},
+      "config": {
+        "data": {
+          "firstName": "John",
+          "lastName": "Doe",
+          "email": "john.doe@example.com",
+          "age": 30
+        }
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Map Fields",
+      "position": {"x": 400, "y": 100},
+      "config": {
+        "operations": [
+          {
+            "type": "map",
+            "config": {
+              "mappings": {
+                "firstName": "first_name",
+                "lastName": "last_name"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 550, "y": 100}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "transform-1"},
+    {"id": "e3", "source": "transform-1", "target": "end-1"}
+  ]
+}
