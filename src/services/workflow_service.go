@@ -210,11 +210,6 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 		timezone = *req.Timezone
 	}
 
-	isActive := true
-	if req.IsActive != nil {
-		isActive = *req.IsActive
-	}
-
 	// SECURITY: Validate webhook path if provided
 	validatedWebhookPath, err := validateWebhookPath(req.WebhookPath)
 	if err != nil {
@@ -224,6 +219,14 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	// Validate workflow definition structure
 	if err := validateWorkflowDefinition(req.Definition); err != nil {
 		return nil, fmt.Errorf("invalid workflow definition: %w", err)
+	}
+
+	// Handle empty string for schedule - treat as nil (no schedule)
+	var schedule *string
+	if req.Schedule != nil && *req.Schedule != "" {
+		schedule = req.Schedule
+	} else {
+		schedule = nil
 	}
 
 	definitionJSON, err := json.Marshal(req.Definition)
@@ -236,11 +239,11 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	// Create workflow and version in a transaction
 	err = s.repo.Transaction(ctx, func(txRepo repositories.TxRepository) error {
 		// Create workflow
+		// Note: IsActive defaults to true in database, we don't need to set it
 		workflow = models.Workflow{
 			Name:               req.Name,
 			Description:        req.Description,
-			IsActive:           isActive,
-			Schedule:           req.Schedule,
+			Schedule:           schedule,
 			Timezone:           timezone,
 			WebhookPath:        validatedWebhookPath,
 			WebhookRequireAuth: req.WebhookRequireAuth != nil && *req.WebhookRequireAuth,
@@ -273,11 +276,30 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	}
 
 	// If scheduling is needed, schedule with robfig/cron (outside transaction)
-	if req.Schedule != nil && isActive && s.schedulerService != nil {
-		if err := s.schedulerService.AddSchedule(workflow.ID, *req.Schedule, timezone); err != nil {
+	log.Printf("🔍 CreateWorkflow: Checking if schedule registration is needed")
+	log.Printf("   schedule != nil: %v", schedule != nil)
+	log.Printf("   schedulerService != nil: %v", s.schedulerService != nil)
+
+	if schedule != nil && s.schedulerService != nil {
+		log.Printf("✅ Schedule provided - registering with scheduler service")
+		log.Printf("   Workflow ID: %s", workflow.ID)
+		log.Printf("   Schedule: %s", *schedule)
+		log.Printf("   Timezone: %s", timezone)
+
+		if err := s.schedulerService.AddSchedule(workflow.ID, *schedule, timezone); err != nil {
 			// Log error but don't fail the workflow creation
 			// This provides eventual consistency similar to the Node version
-			fmt.Printf("⚠️  Failed to schedule workflow %s: %v\n", workflow.ID, err)
+			log.Printf("⚠️  Failed to schedule workflow %s: %v", workflow.ID, err)
+		} else {
+			log.Printf("✅ Successfully registered schedule for workflow %s", workflow.ID)
+		}
+	} else {
+		log.Printf("⏭️  Skipping schedule registration:")
+		if schedule == nil {
+			log.Printf("   - No schedule provided")
+		}
+		if s.schedulerService == nil {
+			log.Printf("   - Scheduler service is nil (NOT INITIALIZED!)")
 		}
 	}
 
@@ -307,13 +329,12 @@ func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, id, userID, acc
 	// Create a new workflow with "Copy" suffix
 	copyName := originalWorkflow.Name + " (Copy)"
 
-	// Create the duplicate workflow (inactive by default, no schedule)
+	// Create the duplicate workflow (no schedule copied)
 	createReq := dto.CreateWorkflowRequest{
 		Name:        copyName,
 		Description: originalWorkflow.Description,
 		Definition:  definition,
-		IsActive:    boolPtr(false), // Start as inactive
-		Schedule:    nil,            // Don't copy schedule
+		Schedule:    nil, // Don't copy schedule
 		Timezone:    &originalWorkflow.Timezone,
 	}
 
@@ -407,7 +428,12 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 		updates["description"] = *req.Description
 	}
 	if req.Schedule != nil {
-		updates["schedule"] = req.Schedule
+		// Empty string means clear the schedule (set to NULL)
+		if *req.Schedule == "" {
+			updates["schedule"] = nil
+		} else {
+			updates["schedule"] = req.Schedule
+		}
 	}
 	if req.Timezone != nil {
 		updates["timezone"] = *req.Timezone
@@ -418,26 +444,52 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 		if err != nil {
 			return nil, fmt.Errorf("invalid webhook path: %w", err)
 		}
+		// Empty string or validation returning nil means clear the webhook path (set to NULL)
 		updates["webhook_path"] = validatedWebhookPath
 	}
 	if req.WebhookRequireAuth != nil {
 		updates["webhook_require_auth"] = *req.WebhookRequireAuth
 	}
+	// Note: We don't update is_active anymore - it's always true
 
 	if err := s.repo.Workflow().Update(ctx, id, updates); err != nil {
 		return nil, fmt.Errorf("failed to update workflow: %w", err)
 	}
 
 	// Update scheduler if schedule changed
+	log.Printf("🔍 UpdateWorkflow: Checking if schedule update is needed")
+	log.Printf("   req.Schedule != nil: %v", req.Schedule != nil)
+	log.Printf("   schedulerService != nil: %v", s.schedulerService != nil)
+
 	if req.Schedule != nil && s.schedulerService != nil {
+		log.Printf("   Reloading workflow to check schedule state...")
 		workflow, _ := s.repo.Workflow().FindByID(ctx, id)
-		if workflow != nil && workflow.IsActive && req.Schedule != nil && *req.Schedule != "" {
-			if err := s.schedulerService.AddSchedule(id, *req.Schedule, workflow.Timezone); err != nil {
-				log.Printf("⚠️  Failed to update schedule for workflow %s: %v\n", id, err)
+		if workflow != nil {
+			log.Printf("   Workflow loaded: ID=%s, Schedule=%v", workflow.ID, workflow.Schedule)
+
+			// If schedule is empty string, remove from scheduler
+			if *req.Schedule == "" {
+				log.Printf("   Removing schedule (Schedule=%s)", *req.Schedule)
+				s.schedulerService.RemoveSchedule(id)
+			} else if *req.Schedule != "" {
+				// Add or update schedule if schedule is not empty
+				log.Printf("   Adding/updating schedule: %s (timezone: %s)", *req.Schedule, workflow.Timezone)
+				if err := s.schedulerService.AddSchedule(id, *req.Schedule, workflow.Timezone); err != nil {
+					log.Printf("⚠️  Failed to update schedule for workflow %s: %v", id, err)
+				} else {
+					log.Printf("✅ Successfully updated schedule for workflow %s", id)
+				}
 			}
-		} else if workflow != nil && (!workflow.IsActive || (req.Schedule != nil && *req.Schedule == "")) {
-			// Remove schedule if workflow is inactive or schedule is cleared
-			s.schedulerService.RemoveSchedule(id)
+		} else {
+			log.Printf("⚠️  Could not reload workflow %s", id)
+		}
+	} else {
+		log.Printf("⏭️  Skipping schedule update:")
+		if req.Schedule == nil {
+			log.Printf("   - No schedule in request")
+		}
+		if s.schedulerService == nil {
+			log.Printf("   - Scheduler service is nil (NOT INITIALIZED!)")
 		}
 	}
 
@@ -917,8 +969,4 @@ func (s *WorkflowService) RestoreWorkflowVersion(id string, version int) error {
 // Helper function
 func stringPtr(s string) *string {
 	return &s
-}
-
-func boolPtr(b bool) *bool {
-	return &b
 }

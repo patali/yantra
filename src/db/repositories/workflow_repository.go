@@ -25,6 +25,8 @@ func (r *workflowRepository) FindByID(ctx context.Context, id string) (*models.W
 		}
 		return nil, fmt.Errorf("failed to find workflow: %w", err)
 	}
+	// Populate computed field
+	workflow.HasWebhookSecret = workflow.WebhookSecretHash != nil && *workflow.WebhookSecretHash != ""
 	return &workflow, nil
 }
 
@@ -36,6 +38,8 @@ func (r *workflowRepository) FindByIDAndAccount(ctx context.Context, id, account
 		}
 		return nil, fmt.Errorf("failed to find workflow: %w", err)
 	}
+	// Populate computed field
+	workflow.HasWebhookSecret = workflow.WebhookSecretHash != nil && *workflow.WebhookSecretHash != ""
 	return &workflow, nil
 }
 
@@ -49,6 +53,12 @@ func (r *workflowRepository) FindByAccountID(ctx context.Context, accountID stri
 	if err != nil {
 		return nil, fmt.Errorf("failed to find workflows: %w", err)
 	}
+
+	// Populate computed field for all workflows
+	for i := range workflows {
+		workflows[i].HasWebhookSecret = workflows[i].WebhookSecretHash != nil && *workflows[i].WebhookSecretHash != ""
+	}
+
 	return workflows, nil
 }
 

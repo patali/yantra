@@ -11,7 +11,7 @@ type CreateWorkflowRequest struct {
 	Timezone            *string                `json:"timezone"`
 	WebhookPath         *string                `json:"webhookPath"`
 	WebhookRequireAuth  *bool                  `json:"webhookRequireAuth"`
-	IsActive            *bool                  `json:"is_active"`
+	// Note: IsActive removed - workflows are always active
 }
 
 // UpdateWorkflowRequest represents the request to update a workflow
@@ -24,6 +24,7 @@ type UpdateWorkflowRequest struct {
 	Timezone           *string                `json:"timezone"`
 	WebhookPath        *string                `json:"webhookPath"`
 	WebhookRequireAuth *bool                  `json:"webhookRequireAuth"`
+	// Note: IsActive removed - workflows are always active
 }
 
 // UpdateScheduleRequest represents the request to update workflow schedule
