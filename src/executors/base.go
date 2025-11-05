@@ -30,9 +30,5 @@ type Executor interface {
 // Outbox pattern should only be used for side effects that need retry logic
 // HTTP nodes should be synchronous so their output can be used by downstream nodes
 func NodeRequiresOutbox(nodeType string) bool {
-	outboxNodeTypes := map[string]bool{
-		"email": true,
-		"slack": true,
-	}
-	return outboxNodeTypes[nodeType]
+	return IsAsyncNode(nodeType)
 }

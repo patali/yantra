@@ -45,27 +45,27 @@ func NewExecutorFactory(db *gorm.DB, emailService EmailServiceInterface) *Execut
 // Shared resources like HTTP clients are passed to executors to prevent leaks
 func (f *ExecutorFactory) GetExecutor(nodeType string) (Executor, error) {
 	switch nodeType {
-	case "json-array":
+	case NodeTypeJSONArray:
 		return NewJsonArrayTriggerExecutor(), nil
-	case "conditional":
+	case NodeTypeConditional:
 		return NewConditionalExecutor(), nil
-	case "transform":
+	case NodeTypeTransform:
 		return NewTransformExecutor(), nil
-	case "delay":
+	case NodeTypeDelay:
 		return NewDelayExecutor(), nil
-	case "email":
+	case NodeTypeEmail:
 		return NewEmailExecutor(f.db, f.emailService), nil
-	case "http":
+	case NodeTypeHTTP:
 		return NewHTTPExecutor(f.httpClient), nil
-	case "slack":
+	case NodeTypeSlack:
 		return NewSlackExecutor(f.httpClient), nil
-	case "loop":
+	case NodeTypeLoop:
 		return NewLoopExecutor(), nil
-	case "loop-accumulator":
+	case NodeTypeLoopAccumulator:
 		return NewLoopAccumulatorExecutor(), nil
-	case "json_to_csv":
+	case NodeTypeJSONToCSV:
 		return NewJSONToCSVExecutor(), nil
-	case "json":
+	case NodeTypeJSON:
 		return NewJSONExecutor(), nil
 	default:
 		return nil, fmt.Errorf("no executor found for node type: %s", nodeType)

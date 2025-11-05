@@ -132,7 +132,7 @@ func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone st
 			WorkflowID:  workflowID,
 			Version:     latestVersion.Version,
 			Status:      "queued",
-			TriggerType: "scheduled",
+			TriggerType: models.TriggerTypeScheduled,
 		}
 
 		if err := s.db.Create(&execution).Error; err != nil {

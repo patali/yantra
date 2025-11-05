@@ -14,6 +14,7 @@ import (
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/db/repositories"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/executors"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -136,6 +137,72 @@ func validateWebhookPath(path *string) (*string, error) {
 	return &webhookPath, nil
 }
 
+// validateWorkflowDefinition validates a workflow definition structure
+func validateWorkflowDefinition(definition map[string]interface{}) error {
+	// Check for nodes
+	nodesInterface, ok := definition["nodes"]
+	if !ok {
+		return fmt.Errorf("workflow definition must contain 'nodes' field")
+	}
+
+	nodes, ok := nodesInterface.([]interface{})
+	if !ok {
+		return fmt.Errorf("'nodes' field must be an array")
+	}
+
+	if len(nodes) == 0 {
+		return fmt.Errorf("workflow must contain at least one node")
+	}
+
+	startCount := 0
+	endCount := 0
+
+	// Validate each node
+	for i, nodeInterface := range nodes {
+		node, ok := nodeInterface.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("node at index %d is not a valid object", i)
+		}
+
+		// Check node ID
+		nodeID, ok := node["id"].(string)
+		if !ok || nodeID == "" {
+			return fmt.Errorf("node at index %d missing or invalid 'id' field", i)
+		}
+
+		// Check node type
+		nodeType, ok := node["type"].(string)
+		if !ok || nodeType == "" {
+			return fmt.Errorf("node '%s' missing or invalid 'type' field", nodeID)
+		}
+
+		// Validate node type is supported
+		if !executors.IsValidNodeType(nodeType) {
+			return fmt.Errorf("node '%s' has unsupported type '%s'", nodeID, nodeType)
+		}
+
+		// Count start and end nodes
+		if nodeType == executors.NodeTypeStart {
+			startCount++
+		}
+		if nodeType == executors.NodeTypeEnd {
+			endCount++
+		}
+	}
+
+	// Validate start node count
+	if startCount != 1 {
+		return fmt.Errorf("workflow must have exactly one start node, found %d", startCount)
+	}
+
+	// Validate end node count
+	if endCount < 1 {
+		return fmt.Errorf("workflow must have at least one end node, found %d", endCount)
+	}
+
+	return nil
+}
+
 // CreateWorkflow creates a new workflow with optional scheduling
 func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWorkflowRequest, createdBy, accountID string) (*models.Workflow, error) {
 	timezone := "UTC"
@@ -152,6 +219,11 @@ func (s *WorkflowService) CreateWorkflow(ctx context.Context, req dto.CreateWork
 	validatedWebhookPath, err := validateWebhookPath(req.WebhookPath)
 	if err != nil {
 		return nil, fmt.Errorf("invalid webhook path: %w", err)
+	}
+
+	// Validate workflow definition structure
+	if err := validateWorkflowDefinition(req.Definition); err != nil {
+		return nil, fmt.Errorf("invalid workflow definition: %w", err)
 	}
 
 	definitionJSON, err := json.Marshal(req.Definition)
@@ -258,6 +330,13 @@ func (s *WorkflowService) UpdateWorkflow(id string, req dto.UpdateWorkflowReques
 		return nil, err
 	}
 
+	// Validate workflow definition if provided
+	if req.Definition != nil {
+		if err := validateWorkflowDefinition(req.Definition); err != nil {
+			return nil, fmt.Errorf("invalid workflow definition: %w", err)
+		}
+	}
+
 	// Update fields
 	updates := map[string]interface{}{
 		"name":        req.Name,
@@ -289,6 +368,11 @@ func (s *WorkflowService) UpdateWorkflowByAccount(id, accountID string, req dto.
 
 	// If definition is updated, create a new version
 	if req.Definition != nil {
+		// Validate workflow definition structure
+		if err := validateWorkflowDefinition(req.Definition); err != nil {
+			return nil, fmt.Errorf("invalid workflow definition: %w", err)
+		}
+
 		newVersion = workflow.CurrentVersion + 1
 		definitionJSON, err := json.Marshal(req.Definition)
 		if err != nil {
@@ -468,7 +552,7 @@ func (s *WorkflowService) DeleteWorkflowByAccount(ctx context.Context, id, accou
 
 // ExecuteWorkflow queues a workflow for execution
 func (s *WorkflowService) ExecuteWorkflow(ctx context.Context, id string, input map[string]interface{}) (jobID string, executionID string, err error) {
-	return s.ExecuteWorkflowWithTrigger(ctx, id, input, "manual")
+	return s.ExecuteWorkflowWithTrigger(ctx, id, input, models.TriggerTypeManual)
 }
 
 // ExecuteWorkflowWithTrigger queues a workflow for execution with a specific trigger type
@@ -563,7 +647,7 @@ func (s *WorkflowService) ResumeWorkflow(ctx context.Context, executionID string
 
 	// Re-queue the workflow execution with the same execution ID
 	// The workflow engine will detect already-executed nodes and skip them
-	jobID, err = s.queueService.QueueWorkflowExecution(ctx, execution.WorkflowID, execution.ID, input, "resume")
+	jobID, err = s.queueService.QueueWorkflowExecution(ctx, execution.WorkflowID, execution.ID, input, models.TriggerTypeResume)
 	if err != nil {
 		return "", fmt.Errorf("failed to queue workflow resumption: %w", err)
 	}

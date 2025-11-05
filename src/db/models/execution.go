@@ -12,7 +12,7 @@ type WorkflowExecution struct {
 	WorkflowID  string     `gorm:"type:uuid;not null" json:"workflowId"`
 	Version     int        `gorm:"not null" json:"version"`
 	Status      string     `gorm:"not null" json:"status"`            // running, success, error, interrupted
-	TriggerType string     `gorm:"not null" json:"triggerType"`       // manual, scheduled, api
+	TriggerType string     `gorm:"not null" json:"triggerType"`       // manual, scheduled, webhook, resume
 	Input       *string    `gorm:"type:text" json:"input,omitempty"`  // JSON string
 	Output      *string    `gorm:"type:text" json:"output,omitempty"` // JSON string
 	Error       *string    `gorm:"type:text" json:"error,omitempty"`
