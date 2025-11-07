@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
 )
 
@@ -26,10 +26,10 @@ func (ctrl *AccountController) RegisterRoutes(rg *gin.RouterGroup, authService *
 	{
 		accounts.GET("/", ctrl.ListMyAccounts)
 		accounts.POST("/", ctrl.CreateAccount)
-		accounts.GET("/:id", ctrl.GetAccountByID)
-		accounts.PUT("/:id", ctrl.UpdateAccount)
-		accounts.POST("/:id/members", ctrl.AddMember)
-		accounts.DELETE("/:id/members/:userId", ctrl.RemoveMember)
+		accounts.GET("/:id", middleware.RequireAccountMembership(ctrl.accountService, "id"), ctrl.GetAccountByID)
+		accounts.PUT("/:id", middleware.RequireAccountMembership(ctrl.accountService, "id", "admin", "owner"), ctrl.UpdateAccount)
+		accounts.POST("/:id/members", middleware.RequireAccountMembership(ctrl.accountService, "id", "admin", "owner"), ctrl.AddMember)
+		accounts.DELETE("/:id/members/:userId", middleware.RequireAccountMembership(ctrl.accountService, "id"), ctrl.RemoveMember)
 	}
 }
 
@@ -73,14 +73,8 @@ func (ctrl *AccountController) CreateAccount(c *gin.Context) {
 
 // GetAccountByID returns an account by ID
 // GET /api/accounts/:id
+// SECURITY: Account membership is verified by RequireAccountMembership middleware
 func (ctrl *AccountController) GetAccountByID(c *gin.Context) {
-	// SECURITY: Get user ID from auth middleware
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
 	id := c.Param("id")
 
 	account, err := ctrl.accountService.GetAccountByID(id)
@@ -89,41 +83,14 @@ func (ctrl *AccountController) GetAccountByID(c *gin.Context) {
 		return
 	}
 
-	// SECURITY: Verify user is a member of this account
-	isMember, err := ctrl.accountService.IsUserMemberOfAccount(userID, id)
-	if err != nil || !isMember {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found or access denied"})
-		return
-	}
-
 	c.JSON(http.StatusOK, account)
 }
 
 // UpdateAccount updates account details
 // PUT /api/accounts/:id
+// SECURITY: Account membership and admin/owner role are verified by RequireAccountMembership middleware
 func (ctrl *AccountController) UpdateAccount(c *gin.Context) {
-	// SECURITY: Get user ID from auth middleware
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
 	id := c.Param("id")
-
-	// SECURITY: Verify user is a member of this account
-	isMember, err := ctrl.accountService.IsUserMemberOfAccount(userID, id)
-	if err != nil || !isMember {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found or access denied"})
-		return
-	}
-
-	// SECURITY: Only admin or owner can update account details
-	role, err := ctrl.accountService.GetUserRoleInAccount(userID, id)
-	if err != nil || (role != "admin" && role != "owner") {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins or owners can update account details"})
-		return
-	}
 
 	var req dto.CreateAccountRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -141,29 +108,9 @@ func (ctrl *AccountController) UpdateAccount(c *gin.Context) {
 
 // AddMember adds a user to an account
 // POST /api/accounts/:id/members
+// SECURITY: Account membership and admin/owner role are verified by RequireAccountMembership middleware
 func (ctrl *AccountController) AddMember(c *gin.Context) {
-	// SECURITY: Get user ID from auth middleware
-	userID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
 	accountID := c.Param("id")
-
-	// SECURITY: Verify user is a member of this account
-	isMember, err := ctrl.accountService.IsUserMemberOfAccount(userID, accountID)
-	if err != nil || !isMember {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found or access denied"})
-		return
-	}
-
-	// SECURITY: Only admin or owner can add members
-	role, err := ctrl.accountService.GetUserRoleInAccount(userID, accountID)
-	if err != nil || (role != "admin" && role != "owner") {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only admins or owners can add members"})
-		return
-	}
 
 	var req dto.AddMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -186,23 +133,12 @@ func (ctrl *AccountController) AddMember(c *gin.Context) {
 
 // RemoveMember removes a user from an account
 // DELETE /api/accounts/:id/members/:userId
+// SECURITY: Account membership is verified by RequireAccountMembership middleware
+// Note: Role check is handled in handler logic to allow self-removal
 func (ctrl *AccountController) RemoveMember(c *gin.Context) {
-	// SECURITY: Get user ID from auth middleware
-	currentUserID, exists := middleware.GetUserID(c)
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
-
+	currentUserID, _ := middleware.GetUserID(c)
 	accountID := c.Param("id")
 	targetUserID := c.Param("userId")
-
-	// SECURITY: Verify user is a member of this account
-	isMember, err := ctrl.accountService.IsUserMemberOfAccount(currentUserID, accountID)
-	if err != nil || !isMember {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found or access denied"})
-		return
-	}
 
 	// SECURITY: Only admin or owner can remove members (unless removing themselves)
 	if currentUserID != targetUserID {
