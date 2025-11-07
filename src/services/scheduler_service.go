@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -492,18 +493,41 @@ func (s *SchedulerService) resumeWorkflowFromSleep(ctx context.Context, executio
 		return fmt.Errorf("failed to find workflow: %w", err)
 	}
 
-	// Update execution status to running
-	if err := s.db.Model(&execution).Update("status", "running").Error; err != nil {
-		return fmt.Errorf("failed to update execution status: %w", err)
+	// Parse original input from execution record
+	// This is crucial - we need to pass the original input when resuming
+	// so that the workflow can continue with the same input it started with
+	var input map[string]interface{}
+	var inputSize int
+	if execution.Input != nil && *execution.Input != "" {
+		inputSize = len(*execution.Input)
+		if err := json.Unmarshal([]byte(*execution.Input), &input); err != nil {
+			log.Printf("⚠️  Failed to parse original input for execution %s: %v", executionID, err)
+			// Continue with empty input rather than failing
+			input = map[string]interface{}{}
+		}
+	} else {
+		input = map[string]interface{}{}
 	}
 
-	// Queue the execution for resumption
-	// The workflow engine will continue from the last checkpoint
-	_, err := s.queueService.QueueWorkflowExecution(ctx, workflowID, executionID, map[string]interface{}{}, "resume_from_sleep")
+	log.Printf("🔄 Resuming workflow with original input (%d bytes)", inputSize)
+
+	// Queue the execution for resumption with the ORIGINAL input FIRST
+	// This ensures that if queueing fails, we don't change the status
+	// The workflow engine will update status to "running" when it starts executing
+	_, err := s.queueService.QueueWorkflowExecution(ctx, workflowID, executionID, input, "resume_from_sleep")
 	if err != nil {
-		// Rollback status update
-		s.db.Model(&execution).Update("status", "sleeping")
 		return fmt.Errorf("failed to queue execution: %w", err)
+	}
+
+	// Now that queueing succeeded, update execution status to running
+	// This prevents the poller from trying to resume the same execution again
+	if err := s.db.Model(&execution).Update("status", "running").Error; err != nil {
+		// If status update fails, the workflow will still execute from the queue
+		// but the poller might try to queue it again on the next poll
+		// This is acceptable as River will handle duplicate jobs
+		log.Printf("⚠️  Failed to update execution status to running: %v", err)
+		log.Printf("   Execution will still proceed from queue, but may be queued again")
+		// Don't return error - the execution is already queued
 	}
 
 	return nil

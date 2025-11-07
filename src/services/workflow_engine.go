@@ -294,6 +294,19 @@ func (s *WorkflowEngineService) ExecuteWorkflow(ctx context.Context, workflowID,
 		return err
 	}
 
+	// Reload execution to check current status
+	// The status may have been updated during execution (e.g., to "sleeping")
+	if err := s.db.First(&execution, "id = ?", executionID).Error; err != nil {
+		log.Printf("⚠️  Failed to reload execution status: %v", err)
+		// Continue with original execution state
+	}
+
+	// Check if workflow is in a waiting state (sleeping) - do NOT mark as complete
+	if execution.Status == "sleeping" {
+		log.Printf("💤 Workflow execution is sleeping, will be resumed later: %s", executionID)
+		return nil
+	}
+
 	// Check if there are any pending outbox messages
 	var pendingCount int64
 	s.db.Model(&models.OutboxMessage{}).
@@ -525,23 +538,29 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 
 				// Store output for next nodes
 				nodeOutputs[currentNodeID] = output
-
-				// CRITICAL: Check if workflow entered a terminal state (sleeping, completed, failed)
-				// This prevents continuing execution when workflow should be paused
-				var currentExecution models.WorkflowExecution
-				if err := s.db.First(&currentExecution, "id = ?", executionID).Error; err == nil {
-					if currentExecution.Status == "sleeping" {
-						log.Printf("  💤 Workflow entered sleeping state after node %s - stopping execution", currentNodeID)
-						return nil // Stop execution gracefully
-					}
-				}
 			}
 		}
 
 		// Add next nodes to queue (for non-loop nodes that didn't use continue)
+		// IMPORTANT: This must happen BEFORE checking for sleeping state to ensure
+		// that when workflow resumes, next nodes are properly queued
 		for _, nextNodeID := range adjacencyList[currentNodeID] {
 			if !executed[nextNodeID] {
 				queue = append(queue, nextNodeID)
+			}
+		}
+
+		// CRITICAL: Check if workflow entered a terminal state (sleeping, completed, failed)
+		// This prevents continuing execution when workflow should be paused
+		// This check happens AFTER adding next nodes to queue so resumption works correctly
+		if !executors.IsSkippableNode(nodeType) {
+			var currentExecution models.WorkflowExecution
+			if err := s.db.First(&currentExecution, "id = ?", executionID).Error; err == nil {
+				if currentExecution.Status == "sleeping" {
+					log.Printf("  💤 Workflow entered sleeping state after node %s - stopping execution", currentNodeID)
+					log.Printf("  📋 Next nodes already queued: %v", adjacencyList[currentNodeID])
+					return nil // Stop execution gracefully
+				}
 			}
 		}
 	}
