@@ -535,8 +535,6 @@ func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto
 		schedule = nil
 	}
 
-	fmt.Printf("🔍 UpdateSchedule called for workflow %s: isActive=%v, schedule=%v, req.Schedule=%v\n", id, isActive, schedule, req.Schedule)
-
 	// Update workflow schedule in database
 	updates := map[string]interface{}{
 		"schedule":  schedule,
@@ -555,13 +553,11 @@ func (s *WorkflowService) UpdateSchedule(ctx context.Context, id string, req dto
 
 	if isActive && schedule != nil && *schedule != "" {
 		// Schedule or update the workflow schedule
-		fmt.Printf("📅 Scheduling workflow %s with schedule: %s\n", id, *schedule)
 		if err := s.schedulerService.UpdateSchedule(id, *schedule, timezone); err != nil {
 			return fmt.Errorf("failed to schedule workflow: %w", err)
 		}
 	} else {
 		// Unschedule the workflow (either inactive or no schedule)
-		fmt.Printf("🗑️  Unscheduling workflow %s (isActive: %v, schedule: %v)\n", id, isActive, schedule)
 		if err := s.schedulerService.RemoveSchedule(id); err != nil {
 			return fmt.Errorf("failed to unschedule workflow: %w", err)
 		}

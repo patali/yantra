@@ -14,10 +14,10 @@ func TestJSONExecutor_WithObject(t *testing.T) {
 		NodeID: "json-node-1",
 		NodeConfig: map[string]interface{}{
 			"data": map[string]interface{}{
-				"name":    "John Doe",
-				"email":   "john@example.com",
-				"age":     30,
-				"active":  true,
+				"name":   "John Doe",
+				"email":  "john@example.com",
+				"age":    30,
+				"active": true,
 				"address": map[string]interface{}{
 					"city":  "New York",
 					"state": "NY",

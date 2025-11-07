@@ -102,12 +102,6 @@ func RequireResource(c *gin.Context, key string) (any, error) {
 	return value, nil
 }
 
-// MustGetResource retrieves a resource from context and returns an error if not found
-// Deprecated: Use RequireResource instead for more idiomatic Go error handling
-func MustGetResource(c *gin.Context, key string) (any, error) {
-	return RequireResource(c, key)
-}
-
 // RequireAccountMembership creates a middleware that verifies the authenticated user is a member of the account
 // Optionally checks if the user has one of the required roles
 // This middleware extracts the account ID from URL params and verifies the user is a member

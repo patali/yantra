@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
 )
 
@@ -27,8 +27,8 @@ func (ctrl *UserController) RegisterRoutes(rg *gin.RouterGroup, authService *ser
 	users.Use(middleware.AuthMiddleware(authService))
 	{
 		users.GET("/", ctrl.GetAllUsers)
-		users.GET("/me", ctrl.GetCurrentUser)           // Frontend compatible endpoint
-		users.POST("", ctrl.CreateUser)                 // Frontend endpoint for creating users
+		users.GET("/me", ctrl.GetCurrentUser) // Frontend compatible endpoint
+		users.POST("", ctrl.CreateUser)       // Frontend endpoint for creating users
 		users.GET("/:id", ctrl.GetUserById)
 		users.POST("/theme", ctrl.UpdateThemeFromToken) // Frontend compatible endpoint
 		users.PATCH("/:id/theme", ctrl.UpdateTheme)     // Alternative endpoint

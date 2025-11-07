@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
 )
 

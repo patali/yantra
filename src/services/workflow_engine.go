@@ -1394,11 +1394,6 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 		sourceHandle, _ := edge["sourceHandle"].(string)
 		target, _ := edge["target"].(string)
 
-		// Debug: Log edge details when source is our loop node
-		if source == loopNodeID {
-			log.Printf("  🔍 Found edge from loop node: source=%s, sourceHandle=%s, target=%s", source, sourceHandle, target)
-		}
-
 		// Check if this edge comes from our loop node's loop-output handle
 		if source == loopNodeID && sourceHandle == "loop-output" {
 			loopBodyNodeIDs = append(loopBodyNodeIDs, target)

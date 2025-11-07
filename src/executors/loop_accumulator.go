@@ -2,7 +2,6 @@ package executors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -17,13 +16,8 @@ func NewLoopAccumulatorExecutor() *LoopAccumulatorExecutor {
 // This prepares the iteration data similar to the regular loop executor
 // The workflow engine handles the actual iteration and accumulation logic
 func (e *LoopAccumulatorExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*ExecutionResult, error) {
-	// Debug: Print input structure
-	inputJSON, _ := json.MarshalIndent(execCtx.Input, "", "  ")
-	fmt.Printf("🔍 Loop Accumulator node input: %s\n", string(inputJSON))
-
 	// Get arrayPath from config (e.g., "data" or "data.users")
 	arrayPath, _ := execCtx.NodeConfig["arrayPath"].(string)
-	fmt.Printf("🔍 Loop Accumulator arrayPath config: '%s'\n", arrayPath)
 
 	var items []interface{}
 	var ok bool
@@ -65,8 +59,6 @@ func (e *LoopAccumulatorExecutor) Execute(ctx context.Context, execCtx Execution
 		}
 	}
 
-	fmt.Printf("🔍 Loop Accumulator found %d items\n", len(items))
-
 	// Get iteration config with abuse prevention limits
 	iterationCount := len(items)
 
@@ -83,7 +75,6 @@ func (e *LoopAccumulatorExecutor) Execute(ctx context.Context, execCtx Execution
 			maxIterations = userMax
 		} else if userMax > globalMaxIterations {
 			maxIterations = globalMaxIterations
-			fmt.Printf("⚠️  Configured max_iterations (%d) exceeds global limit, capping at %d\n", userMax, globalMaxIterations)
 		}
 	}
 
@@ -93,8 +84,6 @@ func (e *LoopAccumulatorExecutor) Execute(ctx context.Context, execCtx Execution
 			Error:   fmt.Sprintf("iteration count %d exceeds maximum %d (configure max_iterations to increase, global limit: %d)", iterationCount, maxIterations, globalMaxIterations),
 		}, nil
 	}
-
-	fmt.Printf("🔍 Loop Accumulator will execute %d iterations (max allowed: %d)\n", iterationCount, maxIterations)
 
 	// Get variable names
 	itemVariable := "item"
@@ -148,25 +137,21 @@ func (e *LoopAccumulatorExecutor) extractArrayFromPath(data interface{}, path st
 	current := data
 
 	// Navigate through each part of the path
-	for i, part := range parts {
+	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 
-		fmt.Printf("🔍 Loop Accumulator navigating path part %d: '%s'\n", i, part)
-
 		// Current must be a map to navigate deeper
 		currentMap, ok := current.(map[string]interface{})
 		if !ok {
-			fmt.Printf("❌ Current data is not an object at path part '%s'\n", part)
 			return nil, false
 		}
 
 		// Get the next level
 		next, exists := currentMap[part]
 		if !exists {
-			fmt.Printf("❌ Key '%s' not found in object. Available keys: %v\n", part, e.getKeys(currentMap))
 			return nil, false
 		}
 
@@ -178,15 +163,5 @@ func (e *LoopAccumulatorExecutor) extractArrayFromPath(data interface{}, path st
 		return arr, true
 	}
 
-	fmt.Printf("❌ Final value is not an array, it's a %T\n", current)
 	return nil, false
-}
-
-// getKeys returns the keys of a map for debugging
-func (e *LoopAccumulatorExecutor) getKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }

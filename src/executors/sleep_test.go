@@ -415,7 +415,7 @@ func TestSleepExecutor(t *testing.T) {
 
 		// Duration should be approximately 24 hours in milliseconds
 		durationMs := result.Output["sleep_duration_ms"].(int64)
-		expectedMs := int64(24 * 60 * 60 * 1000) // 86,400,000 ms
+		expectedMs := int64(24 * 60 * 60 * 1000)        // 86,400,000 ms
 		assert.InDelta(t, expectedMs, durationMs, 1000) // Allow 1 second variance
 	})
 

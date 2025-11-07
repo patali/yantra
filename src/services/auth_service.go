@@ -308,7 +308,7 @@ func (s *AuthService) RequestPasswordReset(email string) (*dto.PasswordResetResp
 		})
 		if err != nil {
 			// Log error but don't fail the request (security - don't reveal if email exists)
-			fmt.Printf("Warning: Failed to send password reset email to %s: %v\n", user.Email, err)
+			// Error is silently ignored to prevent email enumeration
 		}
 	}
 

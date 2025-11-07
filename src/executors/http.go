@@ -90,9 +90,6 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}
 	defer resp.Body.Close()
 
-	// Log only HTTP status
-	fmt.Printf("🌐 HTTP %s %s → %d\n", method, url, resp.StatusCode)
-
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

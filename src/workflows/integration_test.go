@@ -257,8 +257,6 @@ func TestConditionalBranchingWorkflow(t *testing.T) {
 	testDB := setupTestDB(t)
 	defer testDB.cleanup()
 
-	// Similar setup as above...
-	// TODO: Implement conditional branching test
 	t.Skip("Conditional branching test not yet implemented")
 }
 
@@ -267,8 +265,6 @@ func TestLoopProcessingWorkflow(t *testing.T) {
 	testDB := setupTestDB(t)
 	defer testDB.cleanup()
 
-	// Similar setup as above...
-	// TODO: Implement loop processing test
 	t.Skip("Loop processing test not yet implemented")
 }
 
@@ -277,8 +273,6 @@ func TestErrorHandlingWorkflow(t *testing.T) {
 	testDB := setupTestDB(t)
 	defer testDB.cleanup()
 
-	// Similar setup as above...
-	// TODO: Implement error handling test
 	t.Skip("Error handling test not yet implemented")
 }
 
@@ -687,13 +681,12 @@ func TestWorkflowExamples(t *testing.T) {
 }
 
 // TestSleepWorkflowResumption tests the full sleep cycle including resumption
+// This test should:
+// 1. Execute workflow with sleep node
+// 2. Verify sleep schedule created
+// 3. Manually trigger resumption (simulating scheduler)
+// 4. Verify workflow continues from checkpoint
+// 5. Verify nodes after sleep execute correctly
 func TestSleepWorkflowResumption(t *testing.T) {
 	t.Skip("Requires scheduler service and time-based testing - implement with mock scheduler")
-
-	// TODO: Implement test that:
-	// 1. Executes workflow with sleep node
-	// 2. Verifies sleep schedule created
-	// 3. Manually triggers resumption (simulating scheduler)
-	// 4. Verifies workflow continues from checkpoint
-	// 5. Verifies nodes after sleep execute correctly
 }

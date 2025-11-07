@@ -7,15 +7,15 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 	"gorm.io/gorm"
 )
 
 var (
-	appDB            *Database
-	createAppDbOnce  sync.Once
-	dbProvider       DatabaseProvider = ProvidePostgresDB
+	appDB           *Database
+	createAppDbOnce sync.Once
+	dbProvider      DatabaseProvider = ProvidePostgresDB
 )
 
 // Database wraps the GORM DB instance
@@ -61,16 +61,6 @@ func GetAppDB(config *Config) (*Database, error) {
 	}
 
 	return appDB, nil
-}
-
-// New creates a new database instance (deprecated: use GetAppDB for singleton pattern)
-// Kept for backward compatibility
-func New(databaseURL string, debug bool) (*Database, error) {
-	config := &Config{
-		DatabaseURL: databaseURL,
-		Debug:       debug,
-	}
-	return GetAppDB(config)
 }
 
 // RunRiverMigrations runs River queue migrations programmatically

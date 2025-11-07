@@ -58,24 +58,17 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	if s.running {
-		log.Println("⚠️  Scheduler already running, skipping start")
 		return fmt.Errorf("scheduler already running")
 	}
 
-	log.Println("🔄 Starting scheduler service...")
-
 	// Load all active scheduled workflows from database
 	if err := s.loadSchedules(ctx); err != nil {
-		log.Printf("❌ Failed to load schedules: %v", err)
 		return fmt.Errorf("failed to load schedules: %w", err)
 	}
 
 	// Start the cron scheduler
 	s.cron.Start()
 	s.running = true
-
-	log.Println("✅ Scheduler service started successfully")
-	log.Printf("📊 Total scheduled workflows: %d", len(s.schedules))
 
 	// Start a goroutine to periodically sync schedules from database
 	go s.syncSchedulesLoop(ctx)
@@ -99,80 +92,56 @@ func (s *SchedulerService) Stop(ctx context.Context) error {
 	<-cronCtx.Done()
 
 	s.running = false
-	log.Println("✅ Scheduler service stopped")
-
 	return nil
 }
 
 // loadSchedules loads all scheduled workflows from the database
 func (s *SchedulerService) loadSchedules(ctx context.Context) error {
-	log.Println("🔍 Loading scheduled workflows from database...")
-
 	var workflows []models.Workflow
 
 	// Load all workflows with schedules - no isActive check needed
 	// If a workflow has a schedule, it should be scheduled!
 	err := s.db.Where("schedule IS NOT NULL AND schedule != ?", "").Find(&workflows).Error
 	if err != nil {
-		log.Printf("❌ Database query failed: %v", err)
 		return err
 	}
 
-	log.Printf("📋 Found %d workflows with schedules in database", len(workflows))
-
-	successCount := 0
 	for _, workflow := range workflows {
-		log.Printf("📝 Processing workflow: ID=%s, Name=%s, Schedule=%s, Timezone=%s",
-			workflow.ID, workflow.Name, *workflow.Schedule, workflow.Timezone)
-
 		if err := s.addWorkflowSchedule(workflow.ID, *workflow.Schedule, workflow.Timezone); err != nil {
-			log.Printf("❌ Failed to schedule workflow %s (%s): %v", workflow.ID, workflow.Name, err)
-		} else {
-			successCount++
+			log.Printf("Failed to schedule workflow %s (%s): %v", workflow.ID, workflow.Name, err)
 		}
 	}
 
-	log.Printf("✅ Successfully loaded %d/%d scheduled workflows", successCount, len(workflows))
 	return nil
 }
 
 // addWorkflowSchedule adds a workflow to the cron scheduler
 func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone string) error {
-	log.Printf("➕ Adding schedule for workflow %s", workflowID)
-	log.Printf("   Cron expression: %s", cronExpr)
-	log.Printf("   Timezone: %s", timezone)
-
 	// Remove existing schedule if it exists
 	s.removeWorkflowSchedule(workflowID)
 
 	// Parse and validate cron expression
 	// River/standard cron format: "second minute hour day month weekday"
 	// For simplicity, we'll use standard 5-field cron and prepend "0" for seconds
-	originalCronExpr := cronExpr
 	if len(cronExpr) > 0 && !s.hasSixFields(cronExpr) {
 		cronExpr = "0 " + cronExpr // Add seconds field
-		log.Printf("   Converted 5-field to 6-field cron: %s -> %s", originalCronExpr, cronExpr)
 	}
 
 	// Load timezone location
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		// Fallback to UTC if timezone is invalid
-		log.Printf("⚠️  Invalid timezone '%s' for workflow %s, falling back to UTC: %v", timezone, workflowID, err)
 		loc = time.UTC
 	}
 
 	// Create the job function
 	job := func() {
-		log.Printf("🚀 CRON TRIGGERED: Workflow %s", workflowID)
-		log.Printf("   Triggered at: %s", time.Now().Format(time.RFC3339))
-		log.Printf("   Triggered at (%s): %s", timezone, time.Now().In(loc).Format(time.RFC3339))
 		ctx := context.Background()
 
 		// Get workflow and version info
 		var workflow models.Workflow
 		if err := s.db.First(&workflow, "id = ?", workflowID).Error; err != nil {
-			log.Printf("❌ Failed to find workflow %s: %v", workflowID, err)
+			log.Printf("Failed to find workflow %s: %v", workflowID, err)
 			return
 		}
 
@@ -180,7 +149,7 @@ func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone st
 		if err := s.db.Where("workflow_id = ?", workflowID).
 			Order("version DESC").
 			First(&latestVersion).Error; err != nil {
-			log.Printf("❌ Failed to find version for workflow %s: %v", workflowID, err)
+			log.Printf("Failed to find version for workflow %s: %v", workflowID, err)
 			return
 		}
 
@@ -193,33 +162,27 @@ func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone st
 		}
 
 		if err := s.db.Create(&execution).Error; err != nil {
-			log.Printf("❌ Failed to create execution record for workflow %s: %v", workflowID, err)
+			log.Printf("Failed to create execution record for workflow %s: %v", workflowID, err)
 			return
 		}
 
 		_, err := s.queueService.QueueWorkflowExecution(ctx, workflowID, execution.ID, map[string]interface{}{}, "scheduled")
 		if err != nil {
-			log.Printf("❌ Failed to queue scheduled workflow %s: %v", workflowID, err)
+			log.Printf("Failed to queue scheduled workflow %s: %v", workflowID, err)
 			// Mark execution as failed
 			s.db.Model(&execution).Updates(map[string]interface{}{
 				"status": "error",
 				"error":  "Failed to queue for execution",
 			})
-		} else {
-			log.Printf("✅ Queued scheduled workflow %s (execution: %s)", workflowID, execution.ID)
 		}
 	}
 
 	// Parse the cron expression with timezone awareness
-	// Create a parser with the timezone location
-	log.Printf("   Parsing cron expression...")
 	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	schedule, err := parser.Parse(cronExpr)
 	if err != nil {
-		log.Printf("❌ Failed to parse cron expression '%s': %v", cronExpr, err)
 		return fmt.Errorf("invalid cron expression '%s': %w", cronExpr, err)
 	}
-	log.Printf("   ✓ Cron expression parsed successfully")
 
 	// Create a timezone-aware schedule wrapper
 	timezoneSchedule := &TimezoneSchedule{
@@ -227,23 +190,11 @@ func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone st
 		location: loc,
 	}
 
-	// Calculate next run time
-	nextRun := timezoneSchedule.Next(time.Now())
-	log.Printf("   Next scheduled run: %s", nextRun.Format(time.RFC3339))
-	log.Printf("   Next run in %s: %s", timezone, nextRun.In(loc).Format(time.RFC3339))
-
 	// Add to cron scheduler with timezone-aware schedule
-	log.Printf("   Registering with cron scheduler...")
 	entryID := s.cron.Schedule(timezoneSchedule, cron.FuncJob(job))
-	log.Printf("   ✓ Registered with entry ID: %d", entryID)
 
 	// Store mapping
 	s.schedules[workflowID] = entryID
-
-	log.Printf("✅ Successfully scheduled workflow %s", workflowID)
-	log.Printf("   Cron: %s", cronExpr)
-	log.Printf("   Timezone: %s", timezone)
-	log.Printf("   Next run: %s (%s local)", nextRun.In(loc).Format(time.RFC3339), timezone)
 
 	return nil
 }
@@ -251,24 +202,17 @@ func (s *SchedulerService) addWorkflowSchedule(workflowID, cronExpr, timezone st
 // removeWorkflowSchedule removes a workflow from the cron scheduler
 func (s *SchedulerService) removeWorkflowSchedule(workflowID string) {
 	if entryID, exists := s.schedules[workflowID]; exists {
-		log.Printf("🗑️  Removing schedule for workflow %s (entry ID: %d)", workflowID, entryID)
 		s.cron.Remove(entryID)
 		delete(s.schedules, workflowID)
-		log.Printf("   ✓ Schedule removed successfully")
-	} else {
-		log.Printf("   No existing schedule found for workflow %s", workflowID)
 	}
 }
 
 // AddSchedule adds or updates a workflow schedule
 func (s *SchedulerService) AddSchedule(workflowID, cronExpr, timezone string) error {
-	log.Printf("📞 AddSchedule called for workflow %s", workflowID)
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !s.running {
-		log.Printf("⚠️  Scheduler not running, cannot add schedule for workflow %s", workflowID)
 		return fmt.Errorf("scheduler not running")
 	}
 
@@ -277,8 +221,6 @@ func (s *SchedulerService) AddSchedule(workflowID, cronExpr, timezone string) er
 
 // RemoveSchedule removes a workflow schedule
 func (s *SchedulerService) RemoveSchedule(workflowID string) error {
-	log.Printf("📞 RemoveSchedule called for workflow %s", workflowID)
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -316,7 +258,7 @@ func (s *SchedulerService) syncSchedulesLoop(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if err := s.syncSchedules(ctx); err != nil {
-				log.Printf("❌ Error syncing schedules: %v", err)
+				log.Printf("Error syncing schedules: %v", err)
 			}
 		case <-ctx.Done():
 			return
@@ -354,7 +296,7 @@ func (s *SchedulerService) syncSchedules(ctx context.Context) error {
 		// Check if schedule needs updating
 		if _, exists := s.schedules[workflowID]; !exists || s.scheduleChanged(workflowID, *workflow.Schedule) {
 			if err := s.addWorkflowSchedule(workflowID, *workflow.Schedule, workflow.Timezone); err != nil {
-				log.Printf("❌ Failed to sync schedule for workflow %s: %v", workflowID, err)
+				log.Printf("Failed to sync schedule for workflow %s: %v", workflowID, err)
 			}
 		}
 	}
@@ -394,11 +336,6 @@ func (s *SchedulerService) hasSixFields(cronExpr string) bool {
 
 // ScheduleSleepWakeUp schedules a one-time wake-up for a sleeping workflow
 func (s *SchedulerService) ScheduleSleepWakeUp(executionID, workflowID, nodeID string, wakeUpAt time.Time) error {
-	log.Printf("📅 Scheduling sleep wake-up for execution %s", executionID)
-	log.Printf("   Workflow: %s", workflowID)
-	log.Printf("   Node: %s", nodeID)
-	log.Printf("   Wake up at: %s", wakeUpAt.Format(time.RFC3339))
-
 	// Create sleep schedule record in database
 	sleepSchedule := models.SleepSchedule{
 		ExecutionID: executionID,
@@ -408,17 +345,14 @@ func (s *SchedulerService) ScheduleSleepWakeUp(executionID, workflowID, nodeID s
 	}
 
 	if err := s.db.Create(&sleepSchedule).Error; err != nil {
-		log.Printf("❌ Failed to create sleep schedule: %v", err)
 		return fmt.Errorf("failed to create sleep schedule: %w", err)
 	}
 
-	log.Printf("✅ Sleep schedule created successfully (ID: %s)", sleepSchedule.ID)
 	return nil
 }
 
 // pollSleepSchedules polls for sleep schedules that need to wake up
 func (s *SchedulerService) pollSleepSchedules(ctx context.Context) {
-	log.Println("🔄 Starting sleep schedule poller...")
 	ticker := time.NewTicker(5 * time.Second) // Poll every 5 seconds
 	defer ticker.Stop()
 
@@ -426,10 +360,9 @@ func (s *SchedulerService) pollSleepSchedules(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if err := s.processSleepSchedules(ctx); err != nil {
-				log.Printf("❌ Error processing sleep schedules: %v", err)
+				log.Printf("Error processing sleep schedules: %v", err)
 			}
 		case <-ctx.Done():
-			log.Println("⏹️  Sleep schedule poller stopped")
 			return
 		}
 	}
@@ -449,25 +382,19 @@ func (s *SchedulerService) processSleepSchedules(ctx context.Context) error {
 		return nil
 	}
 
-	log.Printf("⏰ Found %d sleep schedule(s) ready to wake up", len(schedules))
-
 	for _, schedule := range schedules {
-		log.Printf("🔔 Waking up execution %s (workflow: %s)", schedule.ExecutionID, schedule.WorkflowID)
-
 		// Resume the workflow execution
 		if err := s.resumeWorkflowFromSleep(ctx, schedule.ExecutionID, schedule.WorkflowID); err != nil {
-			log.Printf("❌ Failed to resume execution %s: %v", schedule.ExecutionID, err)
+			log.Printf("Failed to resume execution %s: %v", schedule.ExecutionID, err)
 			// Continue to next schedule even if this one fails
 			continue
 		}
 
 		// Delete the sleep schedule after successful resume
 		if err := s.db.Delete(&schedule).Error; err != nil {
-			log.Printf("⚠️  Failed to delete sleep schedule %s: %v", schedule.ID, err)
+			log.Printf("Failed to delete sleep schedule %s: %v", schedule.ID, err)
 			// Don't return error - the execution is already resumed
 		}
-
-		log.Printf("✅ Execution %s resumed successfully", schedule.ExecutionID)
 	}
 
 	return nil
@@ -483,7 +410,6 @@ func (s *SchedulerService) resumeWorkflowFromSleep(ctx context.Context, executio
 
 	// Verify it's in sleeping state
 	if execution.Status != "sleeping" {
-		log.Printf("⚠️  Execution %s is not in sleeping state (current: %s), skipping resume", executionID, execution.Status)
 		return nil
 	}
 
@@ -497,19 +423,14 @@ func (s *SchedulerService) resumeWorkflowFromSleep(ctx context.Context, executio
 	// This is crucial - we need to pass the original input when resuming
 	// so that the workflow can continue with the same input it started with
 	var input map[string]interface{}
-	var inputSize int
 	if execution.Input != nil && *execution.Input != "" {
-		inputSize = len(*execution.Input)
 		if err := json.Unmarshal([]byte(*execution.Input), &input); err != nil {
-			log.Printf("⚠️  Failed to parse original input for execution %s: %v", executionID, err)
 			// Continue with empty input rather than failing
 			input = map[string]interface{}{}
 		}
 	} else {
 		input = map[string]interface{}{}
 	}
-
-	log.Printf("🔄 Resuming workflow with original input (%d bytes)", inputSize)
 
 	// Queue the execution for resumption with the ORIGINAL input FIRST
 	// This ensures that if queueing fails, we don't change the status
@@ -525,8 +446,6 @@ func (s *SchedulerService) resumeWorkflowFromSleep(ctx context.Context, executio
 		// If status update fails, the workflow will still execute from the queue
 		// but the poller might try to queue it again on the next poll
 		// This is acceptable as River will handle duplicate jobs
-		log.Printf("⚠️  Failed to update execution status to running: %v", err)
-		log.Printf("   Execution will still proceed from queue, but may be queued again")
 		// Don't return error - the execution is already queued
 	}
 

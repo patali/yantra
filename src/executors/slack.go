@@ -100,8 +100,6 @@ func (e *SlackExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 		}, nil
 	}
 
-	fmt.Printf("💬 Slack message sent to %s: %s\n", message.Channel, message.Text)
-
 	output := map[string]interface{}{
 		"sent":       true,
 		"channel":    message.Channel,

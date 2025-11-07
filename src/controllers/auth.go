@@ -4,9 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/dto"
+	"github.com/patali/yantra/src/middleware"
 	"github.com/patali/yantra/src/services"
 	"gorm.io/gorm"
 )
@@ -25,12 +25,12 @@ func NewAuthController(authService *services.AuthService) *AuthController {
 func (ctrl *AuthController) RegisterRoutes(rg *gin.RouterGroup) {
 	auth := rg.Group("/auth")
 	{
-		auth.POST("/signup", ctrl.SignupWithAccount)                         // Node.js compatible endpoint
-		auth.POST("/register", ctrl.SignupWithAccount)                       // Alternative endpoint
+		auth.POST("/signup", ctrl.SignupWithAccount)   // Node.js compatible endpoint
+		auth.POST("/register", ctrl.SignupWithAccount) // Alternative endpoint
 		auth.POST("/login", ctrl.Login)
 		auth.GET("/me", middleware.AuthMiddleware(ctrl.authService), ctrl.GetMe)
-		auth.POST("/request-password-reset", ctrl.RequestPasswordReset)     // Request password reset
-		auth.POST("/reset-password", ctrl.ResetPassword)                     // Reset password with token
+		auth.POST("/request-password-reset", ctrl.RequestPasswordReset)                                 // Request password reset
+		auth.POST("/reset-password", ctrl.ResetPassword)                                                // Reset password with token
 		auth.POST("/change-password", middleware.AuthMiddleware(ctrl.authService), ctrl.ChangePassword) // Change password (authenticated)
 	}
 }

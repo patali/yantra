@@ -106,11 +106,11 @@ func (e *SleepExecutor) calculateAbsoluteWakeUp(config map[string]interface{}) (
 	// Parse target date in the specified timezone
 	// Support multiple common formats
 	formats := []string{
-		time.RFC3339,           // "2006-01-02T15:04:05Z07:00"
-		time.RFC3339Nano,       // "2006-01-02T15:04:05.999999999Z07:00"
-		"2006-01-02T15:04:05",  // ISO 8601 without timezone
-		"2006-01-02 15:04:05",  // Common datetime format
-		"2006-01-02",           // Date only (assumes 00:00:00)
+		time.RFC3339,          // "2006-01-02T15:04:05Z07:00"
+		time.RFC3339Nano,      // "2006-01-02T15:04:05.999999999Z07:00"
+		"2006-01-02T15:04:05", // ISO 8601 without timezone
+		"2006-01-02 15:04:05", // Common datetime format
+		"2006-01-02",          // Date only (assumes 00:00:00)
 	}
 
 	var targetTime time.Time
