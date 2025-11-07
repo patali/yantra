@@ -22,6 +22,7 @@ func (d *Database) AutoMigrate() error {
 		&models.WorkflowNodeExecution{},
 		&models.OutboxMessage{},
 		&models.EmailProviderSettings{},
+		&models.SleepSchedule{},
 	)
 
 	if err != nil {

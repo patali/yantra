@@ -24,7 +24,8 @@ Yantra supports 13 node types across several categories:
 - **start**: Entry point for workflow execution
 - **end**: Terminal node marking workflow completion
 - **conditional**: Boolean evaluation for branching logic
-- **delay**: Time-based pauses in execution
+- **delay**: Short-term pauses in execution (milliseconds)
+- **sleep**: Long-term delays with scheduling (days/weeks/specific dates)
 
 #### Data Processing
 - **json**: Static or dynamic JSON data injection
@@ -330,6 +331,147 @@ Node positions are visual only:
 - Used only for rendering
 - Execution order determined by edges
 - Can reorganize without affecting behavior
+
+## Sleep Node Architecture
+
+### Overview
+
+The sleep node enables workflows to pause execution for extended periods (hours, days, weeks, or until a specific date) without blocking worker threads. This is implemented using a "sleeping" workflow state and database-backed scheduling.
+
+### Design Goals
+
+1. **Non-Blocking**: Workers freed immediately when workflow enters sleep
+2. **Persistent**: Sleep schedules survive server restarts
+3. **Flexible**: Support both relative (duration from now) and absolute (specific date/time) scheduling
+4. **Reliable**: Guaranteed wake-up using database-backed scheduler
+
+### Sleep Execution Flow
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 1. Workflow Executing → Reaches Sleep Node             │
+└────────────────┬────────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────┐
+│ 2. Sleep Executor Calculates Wake-Up Time              │
+│    - Relative: now + duration                          │
+│    - Absolute: parse target date                       │
+│    - Returns NeedsSleep=true, WakeUpAt=<time>          │
+└────────────────┬────────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────┐
+│ 3. Workflow Engine Handles Sleep Signal                │
+│    - Mark workflow execution status = "sleeping"       │
+│    - Create SleepSchedule record in database           │
+│    - Stop workflow execution (free worker)             │
+└────────────────┬────────────────────────────────────────┘
+                 │
+                 │ ... time passes ...
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────┐
+│ 4. Scheduler Service Polls (every 5 seconds)           │
+│    - Query: SELECT * FROM sleep_schedules              │
+│             WHERE wake_up_at <= NOW()                   │
+└────────────────┬────────────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────┐
+│ 5. Resume Workflow                                      │
+│    - Update execution status = "running"               │
+│    - Queue for execution (resume from checkpoint)      │
+│    - Delete sleep schedule record                      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Database Schema
+
+**SleepSchedule Table:**
+```sql
+CREATE TABLE workflow_sleep_schedules (
+    id UUID PRIMARY KEY,
+    execution_id UUID NOT NULL REFERENCES workflow_executions(id),
+    workflow_id UUID NOT NULL,
+    node_id VARCHAR NOT NULL,
+    wake_up_at TIMESTAMP NOT NULL,  -- UTC
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_wake_up_at ON workflow_sleep_schedules(wake_up_at);
+```
+
+### Configuration Modes
+
+**Relative Mode** (duration from now):
+```json
+{
+  "mode": "relative",
+  "duration_value": 7,
+  "duration_unit": "days"  // seconds, minutes, hours, days, weeks
+}
+```
+
+**Absolute Mode** (specific date):
+```json
+{
+  "mode": "absolute",
+  "target_date": "2025-12-25T10:00:00Z",
+  "timezone": "America/New_York"  // optional
+}
+```
+
+### Time Zones
+
+- All wake-up times stored as UTC in database
+- Relative mode: timezone-agnostic (duration from current moment)
+- Absolute mode: parse date in specified timezone, convert to UTC
+- Supports all IANA timezone names (e.g., "America/New_York", "Europe/London")
+
+### Edge Cases
+
+**Past Target Dates:**
+- Sleep node completes immediately
+- Returns success with `sleep_skipped: true`
+- Workflow continues to next node
+
+**Server Restarts:**
+- Sleep schedules persisted in database
+- Scheduler service loads schedules on startup
+- Polling resumes automatically
+- No sleep time lost
+
+**Very Long Sleeps:**
+- No artificial duration limits
+- Unlimited sleep duration supported
+- Scheduler polls every 5 seconds regardless of duration
+
+### Checkpointing
+
+When a workflow enters sleeping state:
+1. Sleep node execution marked as "success" (completed successfully)
+2. Node output stored (includes scheduled wake-up time)
+3. Workflow execution status = "sleeping"
+4. On resume, workflow continues from next node after sleep
+
+### Comparison: Sleep vs Delay
+
+| Feature | Delay Node | Sleep Node |
+|---------|-----------|------------|
+| Duration | Milliseconds to seconds | Seconds to unlimited |
+| Execution | Blocks worker during delay | Non-blocking (sleeping state) |
+| Use Case | Short pauses (1-60 seconds) | Long pauses (hours to weeks) |
+| Scheduling | In-memory timer | Database-backed scheduler |
+| Restart Safety | ✗ Lost on restart | ✓ Survives restarts |
+| Date Support | ✗ No | ✓ Yes (absolute mode) |
+
+### Performance Considerations
+
+- **Scheduler Polling**: Every 5 seconds (configurable)
+- **Database Load**: Single query per poll cycle
+- **Scalability**: Handles thousands of concurrent sleeping workflows
+- **Memory**: No in-memory state (all in database)
 
 ## Future Enhancements
 

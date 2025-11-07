@@ -1,0 +1,77 @@
+{
+  "name": "Sleep Node - With Conditional Branching",
+  "description": "Tests sleep node in a conditional workflow. Different branches may or may not have sleep nodes.",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 150}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "User Input",
+      "position": {"x": 250, "y": 150},
+      "config": {
+        "data": {
+          "priority": "high",
+          "delayRequired": true
+        }
+      }
+    },
+    {
+      "id": "conditional-1",
+      "type": "conditional",
+      "label": "Check Priority",
+      "position": {"x": 400, "y": 150},
+      "config": {
+        "condition": "input.priority === 'high'"
+      }
+    },
+    {
+      "id": "json-2",
+      "type": "json",
+      "label": "High Priority Path",
+      "position": {"x": 550, "y": 50},
+      "config": {
+        "data": {"message": "Processing immediately - high priority"}
+      }
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Sleep 3 Seconds",
+      "position": {"x": 550, "y": 250},
+      "config": {
+        "mode": "relative",
+        "duration_value": 3,
+        "duration_unit": "seconds"
+      }
+    },
+    {
+      "id": "json-3",
+      "type": "json",
+      "label": "Low Priority Path",
+      "position": {"x": 700, "y": 250},
+      "config": {
+        "data": {"message": "Processing after delay - low priority"}
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 850, "y": 150}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "conditional-1"},
+    {"id": "e3", "source": "conditional-1", "target": "json-2", "label": "true"},
+    {"id": "e4", "source": "conditional-1", "target": "sleep-1", "label": "false"},
+    {"id": "e5", "source": "sleep-1", "target": "json-3"},
+    {"id": "e6", "source": "json-2", "target": "end-1"},
+    {"id": "e7", "source": "json-3", "target": "end-1"}
+  ]
+}

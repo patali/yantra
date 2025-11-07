@@ -145,7 +145,8 @@ For detailed architecture documentation, see:
 | **Control** | `start` | Workflow entry point |
 | | `end` | Workflow termination |
 | | `conditional` | Boolean branching logic |
-| | `delay` | Time-based pauses |
+| | `delay` | Time-based pauses (milliseconds) |
+| | `sleep` | Long-term delays (days/weeks/specific dates) |
 | **Data** | `json` | Static/dynamic JSON data |
 | | `json-array` | Arrays with schema validation |
 | | `transform` | Map, extract, parse, stringify |
@@ -155,6 +156,65 @@ For detailed architecture documentation, see:
 | **Integration** | `http` | HTTP/REST API calls |
 | | `email` | Email with templates |
 | | `slack` | Slack notifications |
+
+### Sleep Node
+
+The `sleep` node enables workflows to pause execution for extended periods without blocking workers. When a workflow hits a sleep node, it enters a "sleeping" state and is scheduled to resume at the specified time.
+
+**Key Features:**
+- **Worker-Friendly**: Workflow enters sleeping state immediately, freeing workers
+- **Persistent**: Survives server restarts (schedules stored in database)
+- **Full Granularity**: Support for seconds, minutes, hours, days, and weeks
+- **Two Modes**: Absolute (specific date) or Relative (duration from now)
+- **Timezone Support**: Schedule wake-ups in any timezone
+- **Unlimited Duration**: No arbitrary limits on sleep duration
+
+**Configuration Examples:**
+
+```json
+// Sleep for 7 days (relative mode)
+{
+  "type": "sleep",
+  "config": {
+    "mode": "relative",
+    "duration_value": 7,
+    "duration_unit": "days"
+  }
+}
+
+// Sleep until specific date (absolute mode)
+{
+  "type": "sleep",
+  "config": {
+    "mode": "absolute",
+    "target_date": "2025-12-25T10:00:00Z",
+    "timezone": "America/New_York"
+  }
+}
+
+// Sleep for 2 hours (relative mode)
+{
+  "type": "sleep",
+  "config": {
+    "mode": "relative",
+    "duration_value": 2,
+    "duration_unit": "hours"
+  }
+}
+```
+
+**Duration Units (Relative Mode):**
+- `seconds` - Sleep for X seconds
+- `minutes` - Sleep for X minutes
+- `hours` - Sleep for X hours
+- `days` - Sleep for X days
+- `weeks` - Sleep for X weeks
+
+**Use Cases:**
+- Scheduled reminders (e.g., follow-up after 7 days)
+- Campaign automation (e.g., send series of emails over weeks)
+- Delayed notifications (e.g., trial expiration warnings)
+- Seasonal workflows (e.g., activate on specific dates)
 
 ## API Endpoints
 

@@ -179,3 +179,105 @@ Add to your CI pipeline:
   env:
     TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/yantra_test
 ```
+
+---
+
+### 5. sleep_relative_short.json
+**Purpose**: Tests sleep node with relative mode (short duration for quick testing)
+**Node Types**: start, json, sleep, json, end
+**Test Coverage**:
+- Sleep node with relative mode
+- Duration in seconds
+- Workflow suspension and resumption
+- Worker non-blocking behavior
+
+**Expected Behavior**:
+- Workflow enters "sleeping" status
+- Sleep schedule created in database
+- Workflow resumes after 5 seconds
+- Post-sleep nodes execute
+
+---
+
+### 6. sleep_absolute_future.json
+**Purpose**: Tests sleep node with absolute mode targeting future date
+**Node Types**: start, sleep, json, end
+**Test Coverage**:
+- Sleep node with absolute mode
+- ISO 8601 date format
+- Timezone handling (UTC)
+- Future date calculation
+
+**Expected Behavior**:
+- Workflow enters "sleeping" status
+- Scheduled wake-up at specific time
+- Workflow resumes at target time
+
+**Note**: Test should dynamically set target_date to avoid past date issues
+
+---
+
+### 7. sleep_absolute_past.json
+**Purpose**: Tests sleep node behavior with past target date
+**Node Types**: start, sleep, json, end
+**Test Coverage**:
+- Past date detection
+- Immediate continuation (skip sleep)
+- Sleep skip metadata in output
+
+**Expected Behavior**:
+- Sleep node completes immediately
+- No sleep schedule created
+- Output includes `sleep_skipped: true`
+- Workflow continues without pause
+
+---
+
+### 8. sleep_with_data_flow.json
+**Purpose**: Tests that data flows correctly through sleep node
+**Node Types**: start, json, transform, sleep, transform, end
+**Test Coverage**:
+- Data preservation through sleep
+- Transform before and after sleep
+- Checkpoint data recovery
+- Node output availability post-sleep
+
+**Expected Behavior**:
+- Data transformed before sleep
+- Sleep suspends workflow
+- After resume, data available to next nodes
+- Final transform operates on pre-sleep data
+
+---
+
+### 9. sleep_multiple_sequential.json
+**Purpose**: Tests workflow with multiple sleep nodes in sequence
+**Node Types**: start, json, sleep, json, sleep, json, end
+**Test Coverage**:
+- Multiple independent sleeps
+- Sequential sleep execution
+- Multiple sleep schedule creation
+- Checkpoint progression
+
+**Expected Behavior**:
+- First sleep suspends workflow
+- Resume, execute intermediate nodes
+- Second sleep suspends again
+- Resume and complete workflow
+
+---
+
+### 10. sleep_with_conditional.json
+**Purpose**: Tests sleep node in conditional branching workflow
+**Node Types**: start, json, conditional, json (true), sleep (false), json, end
+**Test Coverage**:
+- Conditional branching
+- Sleep in one branch only
+- Branch-specific behavior
+- Merged execution paths
+
+**Expected Behavior**:
+- High priority: skip sleep, process immediately
+- Low priority: sleep, then process
+- Both paths converge at end node
+

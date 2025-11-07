@@ -1,0 +1,59 @@
+{
+  "name": "Sleep Node - Relative Mode (Short Duration)",
+  "description": "Tests sleep node with relative mode for short duration (5 seconds). Workflow should pause at sleep node and resume after 5 seconds.",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Before Sleep",
+      "position": {"x": 250, "y": 100},
+      "config": {
+        "data": {
+          "message": "Workflow started",
+          "timestamp": "{{workflow.startTime}}"
+        }
+      }
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Sleep 5 Seconds",
+      "position": {"x": 400, "y": 100},
+      "config": {
+        "mode": "relative",
+        "duration_value": 5,
+        "duration_unit": "seconds"
+      }
+    },
+    {
+      "id": "json-2",
+      "type": "json",
+      "label": "After Sleep",
+      "position": {"x": 550, "y": 100},
+      "config": {
+        "data": {
+          "message": "Sleep completed",
+          "status": "resumed"
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 700, "y": 100}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "sleep-1"},
+    {"id": "e3", "source": "sleep-1", "target": "json-2"},
+    {"id": "e4", "source": "json-2", "target": "end-1"}
+  ]
+}

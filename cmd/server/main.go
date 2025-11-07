@@ -79,7 +79,8 @@ func main() {
 
 	// Initialize and start scheduler service (using robfig/cron + River)
 	schedulerService := services.NewSchedulerService(database.DB, queueService)
-	workflowService.SetScheduler(schedulerService) // Link scheduler to workflow service
+	workflowService.SetScheduler(schedulerService)      // Link scheduler to workflow service
+	workflowEngine.SetSchedulerService(schedulerService) // Link scheduler to workflow engine (for sleep nodes)
 	if err := schedulerService.Start(ctx); err != nil {
 		log.Fatalf("❌ Failed to start scheduler: %v", err)
 	}

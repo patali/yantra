@@ -1,0 +1,86 @@
+{
+  "name": "Sleep Node - Data Flow Preservation",
+  "description": "Tests that data flows correctly through sleep node and is available to nodes after wake-up.",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 100}
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Create User Data",
+      "position": {"x": 250, "y": 100},
+      "config": {
+        "data": {
+          "userId": 12345,
+          "username": "testuser",
+          "email": "test@example.com",
+          "createdAt": "2025-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Add Timestamp",
+      "position": {"x": 400, "y": 100},
+      "config": {
+        "operations": [
+          {
+            "type": "map",
+            "config": {
+              "mappings": {
+                "user_id": "userId",
+                "user_name": "username",
+                "user_email": "email"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Sleep 3 Seconds",
+      "position": {"x": 550, "y": 100},
+      "config": {
+        "mode": "relative",
+        "duration_value": 3,
+        "duration_unit": "seconds"
+      }
+    },
+    {
+      "id": "transform-2",
+      "type": "transform",
+      "label": "Verify Data Available",
+      "position": {"x": 700, "y": 100},
+      "config": {
+        "operations": [
+          {
+            "type": "extract",
+            "config": {
+              "path": "user_name"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 850, "y": 100}
+    }
+  ],
+  "edges": [
+    {"id": "e1", "source": "start-1", "target": "json-1"},
+    {"id": "e2", "source": "json-1", "target": "transform-1"},
+    {"id": "e3", "source": "transform-1", "target": "sleep-1"},
+    {"id": "e4", "source": "sleep-1", "target": "transform-2"},
+    {"id": "e5", "source": "transform-2", "target": "end-1"}
+  ]
+}
