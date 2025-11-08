@@ -83,10 +83,6 @@ type NodeExecutionRepository interface {
 
 // OutboxRepository defines operations for outbox messages
 type OutboxRepository interface {
-	FindByID(ctx context.Context, id string) (*models.OutboxMessage, error)
-	FindByNodeExecutionID(ctx context.Context, nodeExecutionID string) ([]models.OutboxMessage, error)
-	FindPendingMessages(ctx context.Context, limit int) ([]models.OutboxMessage, error)
-	FindOrphanedMessages(ctx context.Context) ([]models.OutboxMessage, error)
 	CountOrphanedMessages(ctx context.Context) (int64, error)
 	Create(ctx context.Context, message *models.OutboxMessage) error
 	Update(ctx context.Context, id string, updates map[string]interface{}) error

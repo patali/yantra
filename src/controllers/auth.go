@@ -93,25 +93,6 @@ func (ctrl *AuthController) GetMe(c *gin.Context) {
 	})
 }
 
-// ValidateToken validates the current JWT token
-// POST /api/auth/validate
-func (ctrl *AuthController) ValidateToken(c *gin.Context) {
-	userID, err := middleware.RequireUserID(c)
-	if err != nil {
-		return
-	}
-	accountID, err := middleware.RequireAccountID(c)
-	if err != nil {
-		return
-	}
-
-	middleware.RespondSuccess(c, http.StatusOK, gin.H{
-		"valid":     true,
-		"userId":    userID,
-		"accountId": accountID,
-	})
-}
-
 // RequestPasswordReset generates and sends a password reset token
 // POST /api/auth/request-password-reset
 func (ctrl *AuthController) RequestPasswordReset(c *gin.Context) {
