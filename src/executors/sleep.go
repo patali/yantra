@@ -58,6 +58,7 @@ func (e *SleepExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 		return &ExecutionResult{
 			Success: true,
 			Output: map[string]interface{}{
+				"data":          true,  // Primary output: sleep completed (true/false)
 				"slept_until":   wakeUpTime.Format(time.RFC3339),
 				"sleep_skipped": true,
 				"reason":        "target time already passed",
@@ -75,6 +76,7 @@ func (e *SleepExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 		NeedsSleep: true,
 		WakeUpAt:   &wakeUpTime,
 		Output: map[string]interface{}{
+			"data":                  wakeUpTime.Format(time.RFC3339),  // Primary output: wake-up time
 			"sleep_scheduled_until": wakeUpTime.Format(time.RFC3339),
 			"sleep_duration_ms":     sleepDuration.Milliseconds(),
 			"mode":                  mode,
@@ -109,7 +111,9 @@ func (e *SleepExecutor) calculateAbsoluteWakeUp(config map[string]interface{}) (
 		time.RFC3339,          // "2006-01-02T15:04:05Z07:00"
 		time.RFC3339Nano,      // "2006-01-02T15:04:05.999999999Z07:00"
 		"2006-01-02T15:04:05", // ISO 8601 without timezone
+		"2006-01-02T15:04",    // ISO 8601 without seconds and timezone
 		"2006-01-02 15:04:05", // Common datetime format
+		"2006-01-02 15:04",    // Common datetime format without seconds
 		"2006-01-02",          // Date only (assumes 00:00:00)
 	}
 

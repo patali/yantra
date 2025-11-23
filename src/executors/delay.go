@@ -29,7 +29,8 @@ func (e *DelayExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 	}
 
 	output := map[string]interface{}{
-		"delayed_ms": duration,
+		"data":       duration, // Primary output: delay duration in milliseconds
+		"delayed_ms": duration, // Kept for backward compatibility
 	}
 
 	return &ExecutionResult{

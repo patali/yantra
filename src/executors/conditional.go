@@ -29,6 +29,15 @@ func (e *ConditionalExecutor) Execute(ctx context.Context, execCtx ExecutionCont
 	// Add input data
 	if execCtx.Input != nil {
 		evalContext["input"] = execCtx.Input
+		// Also flatten input.data to inputData for easier access to nested data
+		if inputMap, ok := execCtx.Input.(map[string]interface{}); ok {
+			if data, ok := inputMap["data"].(map[string]interface{}); ok {
+				// Add nested data at root level for easier access
+				for k, v := range data {
+					evalContext[k] = v
+				}
+			}
+		}
 	}
 
 	// Add workflow data (contains previous node outputs)
@@ -59,7 +68,8 @@ func (e *ConditionalExecutor) Execute(ctx context.Context, execCtx ExecutionCont
 	}
 
 	output := map[string]interface{}{
-		"result":    boolResult,
+		"data":      boolResult, // Primary output: boolean result
+		"result":    boolResult, // Kept for backward compatibility
 		"condition": condition,
 	}
 

@@ -88,8 +88,11 @@ func (e *JSONToCSVExecutor) Execute(ctx context.Context, execCtx ExecutionContex
 		}, nil
 	}
 
+	csvString := csvBuffer.String()
+
 	output := map[string]interface{}{
-		"csv":       csvBuffer.String(),
+		"data":      csvString, // Primary output: CSV string
+		"csv":       csvString, // Kept for backward compatibility
 		"row_count": len(data),
 		"headers":   headers,
 		"converted": true,

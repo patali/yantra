@@ -123,7 +123,8 @@ func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 		return &ExecutionResult{
 			Success: true,
 			Output: map[string]interface{}{
-				"sent":      true,
+				"data":      true, // Primary output: email sent successfully (boolean)
+				"sent":      true, // Kept for backward compatibility
 				"messageId": result.MessageID,
 			},
 		}, nil
@@ -133,7 +134,8 @@ func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 	return &ExecutionResult{
 		Success: true,
 		Output: map[string]interface{}{
-			"sent": true,
+			"data": true, // Primary output: email sent successfully (boolean)
+			"sent": true, // Kept for backward compatibility
 			"note": "email service not configured",
 		},
 	}, nil

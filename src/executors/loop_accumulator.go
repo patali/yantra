@@ -118,8 +118,9 @@ func (e *LoopAccumulatorExecutor) Execute(ctx context.Context, execCtx Execution
 	}
 
 	output := map[string]interface{}{
+		"data":                results, // Primary output: array of iteration results
 		"iteration_count":     iterationCount,
-		"results":             results,
+		"results":             results, // Kept for backward compatibility
 		"items":               items,
 		"accumulationMode":    accumulationMode,
 		"accumulatorVariable": accumulatorVariable,

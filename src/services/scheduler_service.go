@@ -99,9 +99,10 @@ func (s *SchedulerService) Stop(ctx context.Context) error {
 func (s *SchedulerService) loadSchedules(ctx context.Context) error {
 	var workflows []models.Workflow
 
-	// Load all workflows with schedules - no isActive check needed
-	// If a workflow has a schedule, it should be scheduled!
-	err := s.db.Where("schedule IS NOT NULL AND schedule != ?", "").Find(&workflows).Error
+	// Load all active workflows with schedules
+	// Only active workflows should be scheduled
+	// Query for workflows where schedule is not null, not empty, and IsActive is true
+	err := s.db.Where("schedule IS NOT NULL AND schedule <> '' AND is_active = ?", true).Find(&workflows).Error
 	if err != nil {
 		return err
 	}
@@ -272,8 +273,10 @@ func (s *SchedulerService) syncSchedules(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	var workflows []models.Workflow
-	// Load all workflows with schedules - no isActive check needed
-	err := s.db.Where("schedule IS NOT NULL AND schedule != ?", "").Find(&workflows).Error
+	// Load all active workflows with schedules
+	// Only active workflows should be scheduled
+	// Query for workflows where schedule is not null, not empty, and IsActive is true
+	err := s.db.Where("schedule IS NOT NULL AND schedule <> '' AND is_active = ?", true).Find(&workflows).Error
 	if err != nil {
 		return err
 	}

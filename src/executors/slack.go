@@ -101,7 +101,8 @@ func (e *SlackExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 	}
 
 	output := map[string]interface{}{
-		"sent":       true,
+		"data":       true, // Primary output: message sent successfully (boolean)
+		"sent":       true, // Kept for backward compatibility
 		"channel":    message.Channel,
 		"text":       message.Text,
 		"statusCode": resp.StatusCode,

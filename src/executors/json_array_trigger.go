@@ -78,7 +78,8 @@ func (e *JsonArrayTriggerExecutor) Execute(ctx context.Context, execCtx Executio
 	return &ExecutionResult{
 		Success: true,
 		Output: map[string]interface{}{
-			"array":  array,
+			"data":   array, // Primary output: the array itself
+			"array":  array, // Kept for backward compatibility
 			"count":  len(array),
 			"schema": e.detectSchema(array[0].(map[string]interface{})),
 		},

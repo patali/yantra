@@ -103,8 +103,9 @@ func (e *LoopExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}
 
 	output := map[string]interface{}{
+		"data":            results, // Primary output: array of iteration results
 		"iteration_count": iterationCount,
-		"results":         results,
+		"results":         results, // Kept for backward compatibility
 		"items":           items,
 	}
 
