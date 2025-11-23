@@ -22,6 +22,21 @@ go.work
 /dist/
 /build/
 
+# Backend build artifacts
+backend/bin/
+backend/server
+backend/yantra-server
+backend/*.test
+
+# Frontend build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/.nuxt/
+frontend/.output/
+frontend/.cache/
+frontend/dist-ssr/
+frontend/*.local
+
 # IDE and editor files
 .vscode/
 .idea/
@@ -48,6 +63,11 @@ Thumbs.db
 # Logs
 *.log
 logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # Database files
 *.db

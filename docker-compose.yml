@@ -1,0 +1,42 @@
+# Docker Compose configuration for local development
+# Uses PostgreSQL instance running on localhost (host machine)
+# Run from the monorepo root: docker-compose up --build
+
+services:
+  yantra-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: yantra-server
+    ports:
+      - "4701:3000"
+    environment:
+      # Use host.docker.internal to connect to PostgreSQL on host machine
+      # For Linux, use extra_hosts or network_mode: host
+      DATABASE_URL: ${DATABASE_URL:-postgresql://yantra:yantra_dev_password@host.docker.internal:5432/yantra?sslmode=disable}
+      JWT_SECRET: ${JWT_SECRET:-your-dev-jwt-secret-min-32-chars-long}
+      NODE_ENV: ${NODE_ENV:-development}
+      MIGRATION_API_KEY: ${MIGRATION_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  yantra-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # VITE_API_URL is baked into the build at build-time
+        VITE_API_URL: http://localhost:4701
+    container_name: yantra-web
+    ports:
+      - "4700:80"
+    depends_on:
+      yantra-server:
+        condition: service_healthy
+    restart: unless-stopped
+
