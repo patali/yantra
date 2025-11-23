@@ -75,14 +75,19 @@
         </v-col>
       </v-row>
 
-      <v-text-field
+      <v-autocomplete
         v-model="localConfig.timezone"
         label="Timezone (optional)"
-        hint="e.g., America/New_York, Europe/London, UTC"
+        hint="Timezone for duration calculation"
         persistent-hint
+        :items="timezones"
+        item-title="title"
+        item-value="value"
         variant="outlined"
         density="compact"
         class="mb-4"
+        clearable
+        auto-select-first
         @update:model-value="emitUpdate"
       />
     </template>
@@ -101,14 +106,19 @@
         @update:model-value="emitUpdate"
       />
 
-      <v-text-field
+      <v-autocomplete
         v-model="localConfig.timezone"
         label="Timezone"
-        hint="e.g., America/New_York, Europe/London, UTC"
+        hint="Timezone for target date"
         persistent-hint
+        :items="timezones"
+        item-title="title"
+        item-value="value"
         variant="outlined"
         density="compact"
         class="mb-4"
+        clearable
+        auto-select-first
         @update:model-value="emitUpdate"
       />
 
@@ -164,6 +174,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { getTimezonesWithBrowser, getBrowserTimezone } from "@/constants/timezones";
 
 interface Props {
   modelValue: Record<string, any>;
@@ -188,6 +199,12 @@ const durationUnits = [
   { title: "Weeks", value: "weeks" },
 ];
 
+// Get browser's local timezone as default
+const defaultTimezone = getBrowserTimezone();
+
+// Get timezones list with browser timezone included
+const timezones = getTimezonesWithBrowser();
+
 const localConfig = ref({
   mode: props.modelValue?.mode || "relative",
   // Relative mode fields
@@ -195,8 +212,8 @@ const localConfig = ref({
   duration_unit: props.modelValue?.duration_unit || "hours",
   // Absolute mode fields
   target_date: props.modelValue?.target_date || "",
-  // Common fields
-  timezone: props.modelValue?.timezone || "UTC",
+  // Common fields - use browser timezone as default
+  timezone: props.modelValue?.timezone || defaultTimezone,
 });
 
 watch(
@@ -208,7 +225,7 @@ watch(
         duration_value: newValue.duration_value || 1,
         duration_unit: newValue.duration_unit || "hours",
         target_date: newValue.target_date || "",
-        timezone: newValue.timezone || "UTC",
+        timezone: newValue.timezone || defaultTimezone,
       };
     }
   },

@@ -406,13 +406,17 @@
           @update:model-value="emitUpdate"
         />
 
-        <v-select
+        <v-autocomplete
           v-model="localConfig.timezone"
           label="Timezone"
           :items="timezones"
+          item-title="title"
+          item-value="value"
           variant="outlined"
           density="compact"
           class="mb-3"
+          clearable
+          auto-select-first
           @update:model-value="emitUpdate"
         />
 
@@ -499,6 +503,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
 import api from "@/services/api";
+import { getTimezonesWithBrowser, getBrowserTimezone } from "@/constants/timezones";
 
 interface Props {
   modelValue: Record<string, any>;
@@ -511,116 +516,16 @@ const emit = defineEmits<{
   (e: "update"): void;
 }>();
 
-const timezones = [
-  // UTC/GMT
-  "UTC",
-  "GMT",
+// Get browser's local timezone as default
+const defaultTimezone = getBrowserTimezone();
 
-  // Americas - North America
-  "America/New_York",        // Eastern Time (US & Canada)
-  "America/Chicago",         // Central Time (US & Canada)
-  "America/Denver",          // Mountain Time (US & Canada)
-  "America/Phoenix",         // Arizona (no DST)
-  "America/Los_Angeles",     // Pacific Time (US & Canada)
-  "America/Anchorage",       // Alaska
-  "Pacific/Honolulu",        // Hawaii
-  "America/Toronto",         // Toronto
-  "America/Vancouver",       // Vancouver
-  "America/Halifax",         // Atlantic Time (Canada)
-  "America/St_Johns",        // Newfoundland
-
-  // Americas - Latin America
-  "America/Mexico_City",     // Mexico City
-  "America/Bogota",          // Bogota, Lima, Quito
-  "America/Lima",
-  "America/Santiago",        // Santiago
-  "America/Caracas",         // Caracas
-  "America/Sao_Paulo",       // Brasilia, São Paulo
-  "America/Buenos_Aires",    // Buenos Aires
-  "America/Montevideo",      // Montevideo
-
-  // Europe - Western
-  "Europe/London",           // London, Dublin, Lisbon
-  "Europe/Dublin",
-  "Europe/Lisbon",
-  "Atlantic/Reykjavik",      // Reykjavik
-
-  // Europe - Central
-  "Europe/Paris",            // Paris, Brussels, Madrid
-  "Europe/Brussels",
-  "Europe/Madrid",
-  "Europe/Berlin",           // Berlin, Rome, Vienna
-  "Europe/Rome",
-  "Europe/Vienna",
-  "Europe/Amsterdam",        // Amsterdam
-  "Europe/Stockholm",        // Stockholm
-  "Europe/Oslo",             // Oslo
-  "Europe/Copenhagen",       // Copenhagen
-  "Europe/Zurich",           // Zurich
-  "Europe/Prague",           // Prague
-  "Europe/Warsaw",           // Warsaw
-
-  // Europe - Eastern
-  "Europe/Athens",           // Athens, Bucharest
-  "Europe/Bucharest",
-  "Europe/Helsinki",         // Helsinki, Kiev, Sofia
-  "Europe/Kiev",
-  "Europe/Sofia",
-  "Europe/Istanbul",         // Istanbul
-  "Europe/Moscow",           // Moscow, St. Petersburg
-
-  // Middle East
-  "Asia/Dubai",              // Dubai, Abu Dhabi
-  "Asia/Jerusalem",          // Jerusalem
-  "Asia/Riyadh",             // Riyadh, Kuwait
-  "Asia/Tehran",             // Tehran
-  "Asia/Baghdad",            // Baghdad
-
-  // Africa
-  "Africa/Cairo",            // Cairo
-  "Africa/Johannesburg",     // Johannesburg, Pretoria
-  "Africa/Nairobi",          // Nairobi
-  "Africa/Lagos",            // Lagos
-  "Africa/Casablanca",       // Casablanca
-
-  // Asia - South
-  "Asia/Kolkata",            // India Standard Time
-  "Asia/Karachi",            // Karachi
-  "Asia/Dhaka",              // Dhaka
-  "Asia/Colombo",            // Colombo
-
-  // Asia - Southeast
-  "Asia/Bangkok",            // Bangkok, Hanoi, Jakarta
-  "Asia/Jakarta",
-  "Asia/Singapore",          // Singapore
-  "Asia/Kuala_Lumpur",       // Kuala Lumpur
-  "Asia/Manila",             // Manila
-  "Asia/Ho_Chi_Minh",        // Ho Chi Minh
-
-  // Asia - East
-  "Asia/Hong_Kong",          // Hong Kong
-  "Asia/Shanghai",           // Beijing, Shanghai
-  "Asia/Taipei",             // Taipei
-  "Asia/Tokyo",              // Tokyo, Osaka
-  "Asia/Seoul",              // Seoul
-
-  // Australia & Pacific
-  "Australia/Perth",         // Perth
-  "Australia/Adelaide",      // Adelaide
-  "Australia/Darwin",        // Darwin
-  "Australia/Brisbane",      // Brisbane
-  "Australia/Sydney",        // Sydney, Melbourne
-  "Australia/Melbourne",
-  "Australia/Hobart",        // Hobart
-  "Pacific/Auckland",        // Auckland, Wellington
-  "Pacific/Fiji",            // Fiji
-  "Pacific/Guam",            // Guam
-];
+// Get timezones list with browser timezone included
+const timezones = getTimezonesWithBrowser();
 
 const localConfig = ref({
   triggerType: props.modelValue?.triggerType || "manual",
   cronSchedule: props.modelValue?.cronSchedule || "",
-  timezone: props.modelValue?.timezone || "UTC",
+  timezone: props.modelValue?.timezone || defaultTimezone,
   webhookPath: props.modelValue?.webhookPath || "",
   webhookRequireAuth: props.modelValue?.webhookRequireAuth !== undefined
     ? props.modelValue.webhookRequireAuth
@@ -678,7 +583,7 @@ watch(
       localConfig.value = {
         triggerType: newValue.triggerType || "manual",
         cronSchedule: newValue.cronSchedule || "",
-        timezone: newValue.timezone || "UTC",
+        timezone: newValue.timezone || defaultTimezone,
         webhookPath: newValue.webhookPath || "",
         webhookRequireAuth: newValue.webhookRequireAuth !== undefined
           ? newValue.webhookRequireAuth
