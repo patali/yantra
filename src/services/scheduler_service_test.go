@@ -140,45 +140,63 @@ func TestSchedulerService_LoadSchedules(t *testing.T) {
 	// Create test workflows with schedules
 	schedule1 := "*/1 * * * *"
 	schedule2 := "*/5 * * * *"
+	userID := "00000000-0000-0000-0000-000000000001" // Valid UUID for testing
+	workflowID1 := "00000000-0000-0000-0000-000000000010" // Valid UUID for workflow-1
+	workflowID2 := "00000000-0000-0000-0000-000000000020" // Valid UUID for workflow-2
+	workflowID3 := "00000000-0000-0000-0000-000000000030" // Valid UUID for workflow-3
 
-	db.Create(&models.Workflow{
-		ID:             "workflow-1",
+	w1 := models.Workflow{
+		ID:             workflowID1,
 		Name:           "Test Workflow 1",
 		Schedule:       &schedule1,
 		Timezone:       "UTC",
 		IsActive:       true,
 		CurrentVersion: 1,
-		CreatedBy:      "user-1",
-	})
+		CreatedBy:      userID,
+	}
+	err := db.Create(&w1).Error
+	assert.NoError(t, err)
 
-	db.Create(&models.Workflow{
-		ID:             "workflow-2",
+	w2 := models.Workflow{
+		ID:             workflowID2,
 		Name:           "Test Workflow 2",
 		Schedule:       &schedule2,
 		Timezone:       "UTC",
 		IsActive:       true,
 		CurrentVersion: 1,
-		CreatedBy:      "user-1",
-	})
+		CreatedBy:      userID,
+	}
+	err = db.Create(&w2).Error
+	assert.NoError(t, err)
 
 	// Create inactive workflow (shouldn't be scheduled)
 	schedule3 := "*/1 * * * *"
-	db.Create(&models.Workflow{
-		ID:             "workflow-3",
+	w3 := models.Workflow{
+		ID:             workflowID3,
 		Name:           "Inactive Workflow",
 		Schedule:       &schedule3,
 		Timezone:       "UTC",
-		IsActive:       false,
 		CurrentVersion: 1,
-		CreatedBy:      "user-1",
-	})
+		CreatedBy:      userID,
+	}
+	err = db.Create(&w3).Error
+	assert.NoError(t, err)
+
+	// Explicitly set IsActive to false (database default is true)
+	err = db.Model(&w3).Update("is_active", false).Error
+	assert.NoError(t, err)
+
+	// Verify the inactive workflow was created with IsActive = false
+	var verifyWorkflow models.Workflow
+	db.First(&verifyWorkflow, "id = ?", workflowID3)
+	assert.False(t, verifyWorkflow.IsActive, "Workflow 3 should be inactive")
 
 	queueService := &QueueService{}
 	scheduler := NewSchedulerService(db, queueService)
 	ctx := context.Background()
 
 	// Start scheduler (will load schedules from DB)
-	err := scheduler.Start(ctx)
+	err = scheduler.Start(ctx)
 	assert.NoError(t, err)
 	defer scheduler.Stop(ctx)
 
@@ -187,7 +205,7 @@ func TestSchedulerService_LoadSchedules(t *testing.T) {
 
 	// Check loaded schedules
 	workflows := scheduler.GetScheduledWorkflows()
-	assert.Contains(t, workflows, "workflow-1")
-	assert.Contains(t, workflows, "workflow-2")
-	assert.NotContains(t, workflows, "workflow-3") // inactive workflow
+	assert.Contains(t, workflows, workflowID1)
+	assert.Contains(t, workflows, workflowID2)
+	assert.NotContains(t, workflows, workflowID3) // inactive workflow
 }

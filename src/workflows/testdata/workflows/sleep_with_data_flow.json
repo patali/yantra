@@ -6,19 +6,26 @@
       "id": "start-1",
       "type": "start",
       "label": "Start",
-      "position": {"x": 100, "y": 100}
+      "position": {"x": 100, "y": 100},
+      "data": {
+        "label": "Start",
+        "config": {}
+      }
     },
     {
       "id": "json-1",
       "type": "json",
       "label": "Create User Data",
       "position": {"x": 250, "y": 100},
-      "config": {
-        "data": {
-          "userId": 12345,
-          "username": "testuser",
-          "email": "test@example.com",
-          "createdAt": "2025-01-01T00:00:00Z"
+      "data": {
+        "label": "Create User Data",
+        "config": {
+          "data": {
+            "userId": 12345,
+            "username": "testuser",
+            "email": "test@example.com",
+            "createdAt": "2025-01-01T00:00:00Z"
+          }
         }
       }
     },
@@ -27,19 +34,22 @@
       "type": "transform",
       "label": "Add Timestamp",
       "position": {"x": 400, "y": 100},
-      "config": {
-        "operations": [
-          {
-            "type": "map",
-            "config": {
-              "mappings": {
-                "user_id": "userId",
-                "user_name": "username",
-                "user_email": "email"
+      "data": {
+        "label": "Add Timestamp",
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": {
+                  "user_id": "userId",
+                  "user_name": "username",
+                  "user_email": "email"
+                }
               }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
@@ -47,10 +57,13 @@
       "type": "sleep",
       "label": "Sleep 3 Seconds",
       "position": {"x": 550, "y": 100},
-      "config": {
-        "mode": "relative",
-        "duration_value": 3,
-        "duration_unit": "seconds"
+      "data": {
+        "label": "Sleep 3 Seconds",
+        "config": {
+          "mode": "relative",
+          "duration_value": 3,
+          "duration_unit": "seconds"
+        }
       }
     },
     {
@@ -58,22 +71,29 @@
       "type": "transform",
       "label": "Verify Data Available",
       "position": {"x": 700, "y": 100},
-      "config": {
-        "operations": [
-          {
-            "type": "extract",
-            "config": {
-              "path": "user_name"
+      "data": {
+        "label": "Verify Data Available",
+        "config": {
+          "operations": [
+            {
+              "type": "extract",
+              "config": {
+                "path": "user_name"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
       "id": "end-1",
       "type": "end",
       "label": "End",
-      "position": {"x": 850, "y": 100}
+      "position": {"x": 850, "y": 100},
+      "data": {
+        "label": "End",
+        "config": {}
+      }
     }
   ],
   "edges": [

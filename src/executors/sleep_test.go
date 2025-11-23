@@ -321,6 +321,34 @@ func TestSleepExecutor(t *testing.T) {
 		assert.WithinDuration(t, futureTime, *result.WakeUpAt, 1*time.Second)
 	})
 
+	t.Run("Absolute mode - ISO 8601 without seconds", func(t *testing.T) {
+		futureTime := time.Now().UTC().Add(48 * time.Hour)
+		// Format: "2006-01-02T15:04" (no seconds)
+		dateStr := futureTime.Format("2006-01-02T15:04")
+		execCtx := ExecutionContext{
+			NodeID: "sleep-node",
+			NodeConfig: map[string]interface{}{
+				"mode":        "absolute",
+				"target_date": dateStr,
+			},
+			ExecutionID: "test-execution",
+			AccountID:   "test-account",
+		}
+
+		result, err := executor.Execute(context.Background(), execCtx)
+
+		assert.Nil(t, err)
+		assert.True(t, result.Success)
+		assert.True(t, result.NeedsSleep)
+		assert.NotNil(t, result.WakeUpAt)
+		// Should parse correctly (seconds will default to :00)
+		expectedTime := time.Date(
+			futureTime.Year(), futureTime.Month(), futureTime.Day(),
+			futureTime.Hour(), futureTime.Minute(), 0, 0, time.UTC,
+		)
+		assert.WithinDuration(t, expectedTime, *result.WakeUpAt, 1*time.Second)
+	})
+
 	t.Run("Absolute mode - past date (completes immediately)", func(t *testing.T) {
 		pastTime := time.Now().UTC().Add(-24 * time.Hour)
 		execCtx := ExecutionContext{

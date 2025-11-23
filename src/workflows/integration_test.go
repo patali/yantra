@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/executors"
 	"github.com/patali/yantra/src/services"
@@ -46,12 +47,12 @@ func setupTestDB(t *testing.T) *TestDatabase {
 	// Run migrations
 	err = db.AutoMigrate(
 		&models.Account{},
+		&models.AccountMember{},
 		&models.User{},
 		&models.Workflow{},
 		&models.WorkflowVersion{},
 		&models.WorkflowExecution{},
 		&models.WorkflowNodeExecution{},
-		&models.Schedule{},
 		&models.SleepSchedule{},
 		&models.OutboxMessage{},
 	)
@@ -148,7 +149,7 @@ func CreateTestWorkflow(t *testing.T, db *gorm.DB, accountID, userID, definition
 }
 
 // ExecuteTestWorkflow executes a workflow and waits for completion
-func ExecuteTestWorkflow(t *testing.T, engineService *services.WorkflowEngineService, workflow *models.Workflow, inputData map[string]interface{}, timeout time.Duration) (*models.WorkflowExecution, error) {
+func ExecuteTestWorkflow(t *testing.T, db *gorm.DB, engineService *services.WorkflowEngineService, workflow *models.Workflow, inputData map[string]interface{}, timeout time.Duration) (*models.WorkflowExecution, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -158,14 +159,35 @@ func ExecuteTestWorkflow(t *testing.T, engineService *services.WorkflowEngineSer
 		inputJSON = string(data)
 	}
 
-	executionID := "test-execution-" + time.Now().Format("20060102150405")
+	// Create execution record with valid UUID
+	executionID := uuid.New().String()
+	execution := &models.WorkflowExecution{
+		ID:          executionID,
+		WorkflowID:  workflow.ID,
+		Version:     workflow.CurrentVersion,
+		Status:      "queued",
+		TriggerType: "manual",
+	}
+	if inputJSON != "" && inputJSON != "{}" {
+		execution.Input = &inputJSON
+	}
+	if err := db.Create(execution).Error; err != nil {
+		return nil, fmt.Errorf("failed to create execution record: %w", err)
+	}
 
 	// Execute workflow
 	err := engineService.ExecuteWorkflow(ctx, workflow.ID, executionID, inputJSON, "manual")
+	if err != nil {
+		return execution, err
+	}
 
-	// Get execution result (implementation depends on your workflow engine)
-	// This is a simplified version - adjust based on your actual implementation
-	return nil, err
+	// Get updated execution result
+	var updatedExecution models.WorkflowExecution
+	if err := db.First(&updatedExecution, "id = ?", executionID).Error; err != nil {
+		return execution, err
+	}
+
+	return &updatedExecution, nil
 }
 
 func stringPtr(s string) *string {
@@ -182,16 +204,34 @@ func TestSimpleTransformWorkflow(t *testing.T) {
 	testDB.db.Create(account)
 
 	user := &models.User{
-		Username:  "testuser",
-		Email:     "test@example.com",
-		Password:  "hashedpassword",
-		AccountID: &account.ID,
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "hashedpassword",
 	}
 	testDB.db.Create(user)
+
+	// Create account membership
+	membership := &models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	testDB.db.Create(membership)
 
 	// Create mock services
 	mockEmailService := &MockEmailService{}
 	engineService := services.NewWorkflowEngineService(testDB.db, mockEmailService)
+
+	// Create scheduler service for sleep node support
+	queueService := &services.QueueService{}
+	schedulerService := services.NewSchedulerService(testDB.db, queueService)
+	ctx := context.Background()
+	err := schedulerService.Start(ctx)
+	if err != nil {
+		t.Fatalf("Failed to start scheduler service: %v", err)
+	}
+	defer schedulerService.Stop(ctx)
+	engineService.SetSchedulerService(schedulerService)
 
 	// Define a simple transform workflow
 	workflowDef := `{
@@ -200,32 +240,43 @@ func TestSimpleTransformWorkflow(t *testing.T) {
 				"id": "start-1",
 				"type": "start",
 				"label": "Start",
-				"position": {"x": 100, "y": 100}
+				"position": {"x": 100, "y": 100},
+				"data": {
+					"label": "Start",
+					"config": {}
+				}
 			},
 			{
 				"id": "transform-1",
 				"type": "transform",
 				"label": "Transform Data",
 				"position": {"x": 300, "y": 100},
-				"config": {
-					"operations": [
-						{
-							"type": "map",
-							"config": {
-								"mappings": {
-									"firstName": "first_name",
-									"lastName": "last_name"
+				"data": {
+					"label": "Transform Data",
+					"config": {
+						"operations": [
+							{
+								"type": "map",
+								"config": {
+									"mappings": {
+										"firstName": "first_name",
+										"lastName": "last_name"
+									}
 								}
 							}
-						}
-					]
+						]
+					}
 				}
 			},
 			{
 				"id": "end-1",
 				"type": "end",
 				"label": "End",
-				"position": {"x": 500, "y": 100}
+				"position": {"x": 500, "y": 100},
+				"data": {
+					"label": "End",
+					"config": {}
+				}
 			}
 		],
 		"edges": [
@@ -244,7 +295,7 @@ func TestSimpleTransformWorkflow(t *testing.T) {
 		"age":       30,
 	}
 
-	execution, err := ExecuteTestWorkflow(t, engineService, workflow, inputData, 10*time.Second)
+	execution, err := ExecuteTestWorkflow(t, testDB.db, engineService, workflow, inputData, 10*time.Second)
 
 	// Assertions
 	assert.NoError(t, err)
@@ -286,16 +337,34 @@ func TestSleepNodeWorkflow(t *testing.T) {
 	testDB.db.Create(account)
 
 	user := &models.User{
-		Username:  "testuser",
-		Email:     "test@example.com",
-		Password:  "hashedpassword",
-		AccountID: &account.ID,
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "hashedpassword",
 	}
 	testDB.db.Create(user)
+
+	// Create account membership
+	membership := &models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	testDB.db.Create(membership)
 
 	// Create mock services
 	mockEmailService := &MockEmailService{}
 	engineService := services.NewWorkflowEngineService(testDB.db, mockEmailService)
+
+	// Create scheduler service for sleep node support
+	queueService := &services.QueueService{}
+	schedulerService := services.NewSchedulerService(testDB.db, queueService)
+	ctx := context.Background()
+	err := schedulerService.Start(ctx)
+	if err != nil {
+		t.Fatalf("Failed to start scheduler service: %v", err)
+	}
+	defer schedulerService.Stop(ctx)
+	engineService.SetSchedulerService(schedulerService)
 
 	t.Run("Sleep node with relative mode (5 seconds)", func(t *testing.T) {
 		// Define a workflow with a sleep node
@@ -305,15 +374,22 @@ func TestSleepNodeWorkflow(t *testing.T) {
 					"id": "start-1",
 					"type": "start",
 					"label": "Start",
-					"position": {"x": 100, "y": 100}
+					"position": {"x": 100, "y": 100},
+					"data": {
+						"label": "Start",
+						"config": {}
+					}
 				},
 				{
 					"id": "json-1",
 					"type": "json",
 					"label": "Input Data",
 					"position": {"x": 250, "y": 100},
-					"config": {
-						"data": {"message": "before sleep"}
+					"data": {
+						"label": "Input Data",
+						"config": {
+							"data": {"message": "before sleep"}
+						}
 					}
 				},
 				{
@@ -321,10 +397,13 @@ func TestSleepNodeWorkflow(t *testing.T) {
 					"type": "sleep",
 					"label": "Sleep 5 seconds",
 					"position": {"x": 400, "y": 100},
-					"config": {
-						"mode": "relative",
-						"duration_value": 5,
-						"duration_unit": "seconds"
+					"data": {
+						"label": "Sleep 5 seconds",
+						"config": {
+							"mode": "relative",
+							"duration_value": 5,
+							"duration_unit": "seconds"
+						}
 					}
 				},
 				{
@@ -332,15 +411,22 @@ func TestSleepNodeWorkflow(t *testing.T) {
 					"type": "json",
 					"label": "After Sleep",
 					"position": {"x": 550, "y": 100},
-					"config": {
-						"data": {"message": "after sleep"}
+					"data": {
+						"label": "After Sleep",
+						"config": {
+							"data": {"message": "after sleep"}
+						}
 					}
 				},
 				{
 					"id": "end-1",
 					"type": "end",
 					"label": "End",
-					"position": {"x": 700, "y": 100}
+					"position": {"x": 700, "y": 100},
+					"data": {
+						"label": "End",
+						"config": {}
+					}
 				}
 			],
 			"edges": [
@@ -429,23 +515,34 @@ func TestSleepNodeWorkflow(t *testing.T) {
 					"id": "start-1",
 					"type": "start",
 					"label": "Start",
-					"position": {"x": 100, "y": 100}
+					"position": {"x": 100, "y": 100},
+					"data": {
+						"label": "Start",
+						"config": {}
+					}
 				},
 				{
 					"id": "sleep-1",
 					"type": "sleep",
 					"label": "Sleep (past date)",
 					"position": {"x": 300, "y": 100},
-					"config": {
-						"mode": "absolute",
-						"target_date": "%s"
+					"data": {
+						"label": "Sleep (past date)",
+						"config": {
+							"mode": "absolute",
+							"target_date": "%s"
+						}
 					}
 				},
 				{
 					"id": "end-1",
 					"type": "end",
 					"label": "End",
-					"position": {"x": 500, "y": 100}
+					"position": {"x": 500, "y": 100},
+					"data": {
+						"label": "End",
+						"config": {}
+					}
 				}
 			],
 			"edges": [
@@ -516,16 +613,34 @@ func TestWorkflowExamples(t *testing.T) {
 	testDB.db.Create(account)
 
 	user := &models.User{
-		Username:  "testuser",
-		Email:     "test@example.com",
-		Password:  "hashedpassword",
-		AccountID: &account.ID,
+		Username: "testuser",
+		Email:    "test@example.com",
+		Password: "hashedpassword",
 	}
 	testDB.db.Create(user)
+
+	// Create account membership
+	membership := &models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	testDB.db.Create(membership)
 
 	// Create mock services
 	mockEmailService := &MockEmailService{}
 	engineService := services.NewWorkflowEngineService(testDB.db, mockEmailService)
+
+	// Create scheduler service for sleep node support
+	queueService := &services.QueueService{}
+	schedulerService := services.NewSchedulerService(testDB.db, queueService)
+	ctx := context.Background()
+	err := schedulerService.Start(ctx)
+	if err != nil {
+		t.Fatalf("Failed to start scheduler service: %v", err)
+	}
+	defer schedulerService.Stop(ctx)
+	engineService.SetSchedulerService(schedulerService)
 
 	t.Run("sleep_relative_short", func(t *testing.T) {
 		workflowDef := LoadWorkflowFromFile(t, "sleep_relative_short.json")

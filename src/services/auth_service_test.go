@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -97,6 +98,7 @@ func TestAuthService_CreateUser_DuplicateEmail(t *testing.T) {
 func TestAuthService_Login(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
+	repo := repositories.NewRepository(db)
 
 	// Create user
 	req := dto.CreateUserRequest{
@@ -104,7 +106,23 @@ func TestAuthService_Login(t *testing.T) {
 		Email:    "test@example.com",
 		Password: "password123",
 	}
-	_, err := authService.CreateUser(req, nil)
+	user, err := authService.CreateUser(req, nil)
+	assert.NoError(t, err)
+
+	// Create account and membership for the user (required for login)
+	ctx := context.Background()
+	account := models.Account{
+		Name: "Test Account",
+	}
+	err = repo.Account().Create(ctx, &account)
+	assert.NoError(t, err)
+
+	membership := models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	err = repo.AccountMember().Create(ctx, &membership)
 	assert.NoError(t, err)
 
 	// Login
@@ -178,6 +196,22 @@ func TestUserService_UpdatePassword(t *testing.T) {
 		Password: "oldpassword123",
 	}
 	user, err := authService.CreateUser(req, nil)
+	assert.NoError(t, err)
+
+	// Create account and membership for the user (required for login)
+	ctx := context.Background()
+	account := models.Account{
+		Name: "Test Account",
+	}
+	err = repo.Account().Create(ctx, &account)
+	assert.NoError(t, err)
+
+	membership := models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	err = repo.AccountMember().Create(ctx, &membership)
 	assert.NoError(t, err)
 
 	// Update password
@@ -256,6 +290,7 @@ func TestAuthService_RequestPasswordReset_NonExistentEmail(t *testing.T) {
 func TestAuthService_ResetPassword(t *testing.T) {
 	db := setupTestDB(t)
 	authService := NewAuthService(db, "test-secret", nil)
+	repo := repositories.NewRepository(db)
 
 	// Create user
 	req := dto.CreateUserRequest{
@@ -264,6 +299,22 @@ func TestAuthService_ResetPassword(t *testing.T) {
 		Password: "oldpassword123",
 	}
 	user, err := authService.CreateUser(req, nil)
+	assert.NoError(t, err)
+
+	// Create account and membership for the user (required for login)
+	ctx := context.Background()
+	account := models.Account{
+		Name: "Test Account",
+	}
+	err = repo.Account().Create(ctx, &account)
+	assert.NoError(t, err)
+
+	membership := models.AccountMember{
+		AccountID: account.ID,
+		UserID:    user.ID,
+		Role:      "owner",
+	}
+	err = repo.AccountMember().Create(ctx, &membership)
 	assert.NoError(t, err)
 
 	// Request password reset

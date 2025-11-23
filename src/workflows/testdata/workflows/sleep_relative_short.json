@@ -6,17 +6,24 @@
       "id": "start-1",
       "type": "start",
       "label": "Start",
-      "position": {"x": 100, "y": 100}
+      "position": {"x": 100, "y": 100},
+      "data": {
+        "label": "Start",
+        "config": {}
+      }
     },
     {
       "id": "json-1",
       "type": "json",
       "label": "Before Sleep",
       "position": {"x": 250, "y": 100},
-      "config": {
-        "data": {
-          "message": "Workflow started",
-          "timestamp": "{{workflow.startTime}}"
+      "data": {
+        "label": "Before Sleep",
+        "config": {
+          "data": {
+            "message": "Workflow started",
+            "timestamp": "{{workflow.startTime}}"
+          }
         }
       }
     },
@@ -25,10 +32,13 @@
       "type": "sleep",
       "label": "Sleep 5 Seconds",
       "position": {"x": 400, "y": 100},
-      "config": {
-        "mode": "relative",
-        "duration_value": 5,
-        "duration_unit": "seconds"
+      "data": {
+        "label": "Sleep 5 Seconds",
+        "config": {
+          "mode": "relative",
+          "duration_value": 5,
+          "duration_unit": "seconds"
+        }
       }
     },
     {
@@ -36,10 +46,13 @@
       "type": "json",
       "label": "After Sleep",
       "position": {"x": 550, "y": 100},
-      "config": {
-        "data": {
-          "message": "Sleep completed",
-          "status": "resumed"
+      "data": {
+        "label": "After Sleep",
+        "config": {
+          "data": {
+            "message": "Sleep completed",
+            "status": "resumed"
+          }
         }
       }
     },
@@ -47,7 +60,11 @@
       "id": "end-1",
       "type": "end",
       "label": "End",
-      "position": {"x": 700, "y": 100}
+      "position": {"x": 700, "y": 100},
+      "data": {
+        "label": "End",
+        "config": {}
+      }
     }
   ],
   "edges": [

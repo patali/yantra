@@ -6,17 +6,24 @@
       "id": "start-1",
       "type": "start",
       "label": "Start",
-      "position": {"x": 100, "y": 150}
+      "position": {"x": 100, "y": 150},
+      "data": {
+        "label": "Start",
+        "config": {}
+      }
     },
     {
       "id": "json-1",
       "type": "json",
       "label": "User Input",
       "position": {"x": 250, "y": 150},
-      "config": {
-        "data": {
-          "priority": "high",
-          "delayRequired": true
+      "data": {
+        "label": "User Input",
+        "config": {
+          "data": {
+            "priority": "high",
+            "delayRequired": true
+          }
         }
       }
     },
@@ -25,8 +32,11 @@
       "type": "conditional",
       "label": "Check Priority",
       "position": {"x": 400, "y": 150},
-      "config": {
-        "condition": "input.priority === 'high'"
+      "data": {
+        "label": "Check Priority",
+        "config": {
+          "condition": "priority == \"high\""
+        }
       }
     },
     {
@@ -34,8 +44,11 @@
       "type": "json",
       "label": "High Priority Path",
       "position": {"x": 550, "y": 50},
-      "config": {
-        "data": {"message": "Processing immediately - high priority"}
+      "data": {
+        "label": "High Priority Path",
+        "config": {
+          "data": {"message": "Processing immediately - high priority"}
+        }
       }
     },
     {
@@ -43,10 +56,13 @@
       "type": "sleep",
       "label": "Sleep 3 Seconds",
       "position": {"x": 550, "y": 250},
-      "config": {
-        "mode": "relative",
-        "duration_value": 3,
-        "duration_unit": "seconds"
+      "data": {
+        "label": "Sleep 3 Seconds",
+        "config": {
+          "mode": "relative",
+          "duration_value": 3,
+          "duration_unit": "seconds"
+        }
       }
     },
     {
@@ -54,15 +70,22 @@
       "type": "json",
       "label": "Low Priority Path",
       "position": {"x": 700, "y": 250},
-      "config": {
-        "data": {"message": "Processing after delay - low priority"}
+      "data": {
+        "label": "Low Priority Path",
+        "config": {
+          "data": {"message": "Processing after delay - low priority"}
+        }
       }
     },
     {
       "id": "end-1",
       "type": "end",
       "label": "End",
-      "position": {"x": 850, "y": 150}
+      "position": {"x": 850, "y": 150},
+      "data": {
+        "label": "End",
+        "config": {}
+      }
     }
   ],
   "edges": [
