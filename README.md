@@ -157,6 +157,84 @@ For detailed architecture documentation, see:
 | | `email` | Email with templates |
 | | `slack` | Slack notifications |
 
+## Node Input/Output Format
+
+All nodes in Yantra follow a **standardized input/output format** to ensure consistency and ease of use across workflows.
+
+### Output Format Standard
+
+Every node returns an output object that **always includes a `data` field** containing the primary result of the node's execution. Additional metadata fields may also be included for specific node types.
+
+**Standard Structure:**
+```json
+{
+  "data": <primary_output>,
+  // Additional metadata fields...
+}
+```
+
+### Node-Specific Output Examples
+
+| Node Type | `data` Field | Additional Fields | Example |
+|-----------|--------------|-------------------|---------|
+| `json` | The JSON object/value | - | `{"data": {"name": "John", "age": 30}}` |
+| `transform` | Transformed data | - | `{"data": {"firstName": "John"}}` |
+| `http` | Response body (parsed JSON or string) | `status_code`, `url`, `method`, `headers` | `{"data": {...}, "status_code": 200, "headers": {...}}` |
+| `conditional` | Boolean result | `result` (backward compat), `condition` | `{"data": true, "result": true, "condition": "x > 5"}` |
+| `loop` | Array of iteration results | `iteration_count`, `items`, `results` | `{"data": [{...}], "iteration_count": 10}` |
+| `loop-accumulator` | Array of accumulated results | `iteration_count`, `items`, `accumulationMode` | `{"data": [{...}], "iteration_count": 10}` |
+| `json-array` | The validated array | `count`, `schema`, `array` | `{"data": [{...}], "count": 5, "schema": {...}}` |
+| `json_to_csv` | CSV string | `row_count`, `headers`, `csv`, `converted` | `{"data": "name,age\nJohn,30", "row_count": 1}` |
+| `email` | Success boolean (true) | `sent`, `messageId` | `{"data": true, "sent": true, "messageId": "..."}` |
+| `slack` | Success boolean (true) | `sent`, `channel`, `text`, `statusCode` | `{"data": true, "sent": true, "channel": "#general"}` |
+| `delay` | Delay duration in milliseconds | `delayed_ms` | `{"data": 1000, "delayed_ms": 1000}` |
+| `sleep` | Wake-up time (ISO 8601) or true | `sleep_scheduled_until`, `sleep_duration_ms`, `mode` | `{"data": "2025-12-25T10:00:00Z", "mode": "absolute"}` |
+
+### Accessing Node Outputs
+
+In workflows, you can access any node's output using the standardized `data` field:
+
+**In Conditional Nodes:**
+```javascript
+// Access previous node output
+nodeId.data > 10
+
+// Access nested data
+nodeId.data.users.length > 0
+```
+
+**In HTTP Request Bodies:**
+```json
+{
+  "userId": "{{nodeId.data.id}}",
+  "items": "{{loopNode.data}}"
+}
+```
+
+**In Transform Operations:**
+```json
+{
+  "operations": [
+    {
+      "type": "extract",
+      "config": {
+        "jsonPath": "$.data.users[0]"
+      }
+    }
+  ]
+}
+```
+
+### Backward Compatibility
+
+For existing workflows, original field names are maintained alongside the new `data` field:
+- `conditional` still includes `result` field
+- `json-array` still includes `array` field  
+- `loop` still includes `results` field
+- All nodes with specialized fields retain them
+
+This ensures that existing workflows continue to work without modification while new workflows can adopt the standardized `data` field for consistency.
+
 ### Sleep Node
 
 The `sleep` node enables workflows to pause execution for extended periods without blocking workers. When a workflow hits a sleep node, it enters a "sleeping" state and is scheduled to resume at the specified time.
