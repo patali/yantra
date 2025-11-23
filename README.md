@@ -53,7 +53,14 @@ GRANT ALL PRIVILEGES ON DATABASE yantra TO yantra;
 
 2. **Set environment variables** (optional)
 
-Create a `.env` file in the root directory:
+Copy the example file and update with your values:
+
+```bash
+cp env.example .env
+# Edit .env with your database credentials and JWT secret
+```
+
+Or create a `.env` file manually:
 
 ```bash
 DATABASE_URL=postgresql://yantra:yantra_dev_password@host.docker.internal:5432/yantra?sslmode=disable
@@ -75,7 +82,31 @@ The services will be available at:
 
 ### Local Development (Without Docker)
 
-#### Backend Development
+#### Quick Start with Tmux (Recommended)
+
+The easiest way to run both backend and frontend together:
+
+```bash
+./dev.sh
+```
+
+This script will:
+- ✅ Check all prerequisites (Go, Node, tmux, PostgreSQL)
+- ✅ Install dependencies if needed
+- ✅ Create a tmux session with both services running side-by-side
+- ✅ Auto-attach to the session
+
+**Tmux commands:**
+- **Detach**: `Ctrl+b` then `d` (services keep running)
+- **Reattach**: `tmux attach-session -t yantra-dev`
+- **Switch panes**: `Ctrl+b` then arrow keys
+- **Stop all**: `tmux kill-session -t yantra-dev`
+
+**Access URLs:**
+- Frontend: http://localhost:5173 (Vite dev server)
+- Backend: http://localhost:3000
+
+#### Manual Backend Development
 
 ```bash
 cd backend
@@ -94,7 +125,7 @@ go run cmd/server/main.go
 
 The backend will start on http://localhost:3000
 
-#### Frontend Development
+#### Manual Frontend Development
 
 ```bash
 cd frontend
