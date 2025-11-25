@@ -110,6 +110,28 @@ func (e *TransformExecutor) extractWithJSONPath(config map[string]interface{}, d
 	return result, nil
 }
 
+// getNestedValue retrieves a value from a nested map using dot notation
+func (e *TransformExecutor) getNestedValue(data map[string]interface{}, path string) (interface{}, bool) {
+	parts := strings.Split(path, ".")
+	var current interface{} = data
+
+	for _, part := range parts {
+		currentMap, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+
+		value, exists := currentMap[part]
+		if !exists {
+			return nil, false
+		}
+
+		current = value
+	}
+
+	return current, true
+}
+
 // mapFields maps fields from input to output according to a mapping configuration
 // Config should contain "mappings" which is an array of {from, to} or an object mapping
 func (e *TransformExecutor) mapFields(config map[string]interface{}, data interface{}) (interface{}, error) {
@@ -157,11 +179,14 @@ func (e *TransformExecutor) mapFields(config map[string]interface{}, data interf
 			}
 
 			// Copy value from 'from' field to 'to' field
-			if value, exists := dataMap[fromField]; exists {
+			// Support nested field access using dot notation
+			value, exists := e.getNestedValue(dataMap, fromField)
+			if exists {
 				result[toField] = value
 
 				// If removeSource is true and we're including unmapped fields, remove the original field
-				if includeUnmapped {
+				// Note: only works for top-level fields, not nested paths
+				if includeUnmapped && !strings.Contains(fromField, ".") {
 					if removeSource, ok := mapping["removeSource"].(bool); ok && removeSource && fromField != toField {
 						delete(result, fromField)
 					}
@@ -180,7 +205,9 @@ func (e *TransformExecutor) mapFields(config map[string]interface{}, data interf
 				continue
 			}
 
-			if value, exists := dataMap[fromField]; exists {
+			// Support nested field access using dot notation
+			value, exists := e.getNestedValue(dataMap, fromField)
+			if exists {
 				result[toField] = value
 			}
 		}

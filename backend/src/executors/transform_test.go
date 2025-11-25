@@ -192,4 +192,58 @@ func TestTransformExecutor(t *testing.T) {
 		data := result.Output["data"].(map[string]interface{})
 		assert.Equal(t, "John Doe", data["fullName"])
 	})
+
+	t.Run("Map fields with nested paths", func(t *testing.T) {
+		input := map[string]interface{}{
+			"accumulated": []interface{}{},
+			"index":       0,
+			"item": map[string]interface{}{
+				"name": "Leanne Graham",
+				"address": map[string]interface{}{
+					"city": "Gwenborough",
+				},
+			},
+		}
+		execCtx := ExecutionContext{
+			NodeID: "transform-node",
+			NodeConfig: map[string]interface{}{
+				"operations": []interface{}{
+					map[string]interface{}{
+						"type": "map",
+						"config": map[string]interface{}{
+							"mappings": []interface{}{
+								map[string]interface{}{
+									"from": "index",
+									"to":   "index",
+								},
+								map[string]interface{}{
+									"from": "item.name",
+									"to":   "name",
+								},
+								map[string]interface{}{
+									"from": "item.address.city",
+									"to":   "city",
+								},
+							},
+						},
+					},
+				},
+			},
+			Input:       input,
+			ExecutionID: "test-execution",
+			AccountID:   "test-account",
+		}
+
+		result, err := executor.Execute(context.Background(), execCtx)
+
+		assert.NoError(t, err)
+		assert.True(t, result.Success)
+		data := result.Output["data"].(map[string]interface{})
+		assert.Equal(t, 0, data["index"])
+		assert.Equal(t, "Leanne Graham", data["name"])
+		assert.Equal(t, "Gwenborough", data["city"])
+		// Should not include the nested item object since includeUnmapped is not set
+		assert.Nil(t, data["item"])
+		assert.Nil(t, data["accumulated"])
+	})
 }
