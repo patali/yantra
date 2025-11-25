@@ -1,10 +1,13 @@
 package executors
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
+	"text/template"
 
 	"gorm.io/gorm"
 )
@@ -141,8 +144,77 @@ func (e *EmailExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 	}, nil
 }
 
-// replaceTemplateVariables replaces {{variable}} or {{input.field}} patterns with actual values
+// replaceTemplateVariables processes template text with Go template engine
+// Supports both simple {{.variable}} and advanced features like {{range}}, {{if}}, etc.
 func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{}) string {
+	// Check if template uses advanced features (range, if, with, etc.)
+	hasAdvancedFeatures := e.hasAdvancedTemplateFeatures(text)
+
+	if hasAdvancedFeatures {
+		// Use Go template engine for advanced features
+		return e.executeGoTemplate(text, input)
+	}
+
+	// For simple variable replacement, use the legacy method for backward compatibility
+	// This handles {{variable}} without the dot prefix
+	return e.executeSimpleTemplate(text, input)
+}
+
+// hasAdvancedTemplateFeatures checks if the template uses Go template engine features
+func (e *EmailExecutor) hasAdvancedTemplateFeatures(text string) bool {
+	advancedKeywords := []string{"{{range", "{{if", "{{with", "{{end", "{{else", "{{define", "{{template", "{{block"}
+	for _, keyword := range advancedKeywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	// Check if using dot notation like {{.variable}} which is Go template syntax
+	re := regexp.MustCompile(`\{\{\s*\.[A-Za-z_]`)
+	return re.MatchString(text)
+}
+
+// executeGoTemplate executes the template using Go's template engine
+func (e *EmailExecutor) executeGoTemplate(text string, input interface{}) string {
+	// Create a new template with custom functions
+	tmpl, err := template.New("email").Funcs(template.FuncMap{
+		"json": func(v interface{}) string {
+			b, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return fmt.Sprintf("%v", v)
+			}
+			return string(b)
+		},
+		"jsonCompact": func(v interface{}) string {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return fmt.Sprintf("%v", v)
+			}
+			return string(b)
+		},
+		"upper": strings.ToUpper,
+		"lower": strings.ToLower,
+		"title": strings.Title,
+	}).Parse(text)
+
+	if err != nil {
+		// If template parsing fails, return original text
+		return text
+	}
+
+	// Execute the template
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, input)
+	if err != nil {
+		// If execution fails, return original text
+		return text
+	}
+
+	return buf.String()
+}
+
+// executeSimpleTemplate handles simple {{variable}} replacement (legacy behavior)
+// This maintains backward compatibility with templates that don't use the dot prefix
+func (e *EmailExecutor) executeSimpleTemplate(text string, input interface{}) string {
 	// Match patterns like {{input.field}} or {{variable}}
 	re := regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
@@ -155,7 +227,7 @@ func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{})
 
 		// Convert to string
 		if value != nil {
-			return fmt.Sprintf("%v", value)
+			return e.valueToString(value)
 		}
 
 		// If not found, keep the original placeholder
@@ -163,6 +235,27 @@ func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{})
 	})
 
 	return result
+}
+
+// valueToString converts a value to a human-readable string
+// For arrays and objects, it uses JSON formatting for readability
+func (e *EmailExecutor) valueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case int, int32, int64, float32, float64, bool:
+		return fmt.Sprintf("%v", v)
+	case []interface{}, map[string]interface{}:
+		// For arrays and objects, use pretty-printed JSON
+		jsonBytes, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			// Fallback to default formatting if JSON encoding fails
+			return fmt.Sprintf("%v", v)
+		}
+		return string(jsonBytes)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // getValueFromPath navigates through nested objects to get a value
