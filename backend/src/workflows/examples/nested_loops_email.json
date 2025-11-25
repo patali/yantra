@@ -1,0 +1,334 @@
+{
+  "name": "Nested Loops - Orders with Items",
+  "description": "Demonstrates nested loop processing with orders and their items, using loop accumulators and template engine for formatted email output",
+  "category": "Advanced",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {
+        "x": 150,
+        "y": 100
+      },
+      "data": {
+        "config": {
+          "triggerType": "manual"
+        }
+      }
+    },
+    {
+      "id": "json-1",
+      "type": "json",
+      "label": "Order Data",
+      "position": {
+        "x": 150,
+        "y": 200
+      },
+      "data": {
+        "config": {
+          "data": [
+            {
+              "orderId": "ORD-001",
+              "customer": "Alice Johnson",
+              "date": "2024-01-15",
+              "items": [
+                {"orderId": "ORD-001", "customer": "Alice Johnson", "date": "2024-01-15", "name": "Laptop", "price": 999, "qty": 1},
+                {"orderId": "ORD-001", "customer": "Alice Johnson", "date": "2024-01-15", "name": "Mouse", "price": 25, "qty": 2},
+                {"orderId": "ORD-001", "customer": "Alice Johnson", "date": "2024-01-15", "name": "Keyboard", "price": 75, "qty": 1}
+              ]
+            },
+            {
+              "orderId": "ORD-002",
+              "customer": "Bob Smith",
+              "date": "2024-01-16",
+              "items": [
+                {"orderId": "ORD-002", "customer": "Bob Smith", "date": "2024-01-16", "name": "Monitor", "price": 299, "qty": 2},
+                {"orderId": "ORD-002", "customer": "Bob Smith", "date": "2024-01-16", "name": "USB Cable", "price": 10, "qty": 3}
+              ]
+            },
+            {
+              "orderId": "ORD-003",
+              "customer": "Carol White",
+              "date": "2024-01-17",
+              "items": [
+                {"orderId": "ORD-003", "customer": "Carol White", "date": "2024-01-17", "name": "Desk Chair", "price": 350, "qty": 1},
+                {"orderId": "ORD-003", "customer": "Carol White", "date": "2024-01-17", "name": "Desk Lamp", "price": 45, "qty": 2},
+                {"orderId": "ORD-003", "customer": "Carol White", "date": "2024-01-17", "name": "Notepad", "price": 5, "qty": 10}
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "loop-accumulator-outer",
+      "type": "loop-accumulator",
+      "label": "Process Each Order",
+      "position": {
+        "x": 150,
+        "y": 330
+      },
+      "data": {},
+      "config": {
+        "accumulationMode": "array",
+        "accumulatorVariable": "accumulated",
+        "arrayPath": "data"
+      }
+    },
+    {
+      "id": "transform-order",
+      "type": "transform",
+      "label": "Extract Order Info",
+      "position": {
+        "x": -150,
+        "y": 420
+      },
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "index",
+                    "to": "orderIndex"
+                  },
+                  {
+                    "from": "item.orderId",
+                    "to": "orderId"
+                  },
+                  {
+                    "from": "item.customer",
+                    "to": "customer"
+                  },
+                  {
+                    "from": "item.date",
+                    "to": "date"
+                  },
+                  {
+                    "from": "item.items",
+                    "to": "items"
+                  }
+                ],
+                "includeUnmapped": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "loop-accumulator-inner",
+      "type": "loop-accumulator",
+      "label": "Process Order Items",
+      "position": {
+        "x": -251,
+        "y": 509
+      },
+      "data": {
+        "config": {
+          "accumulationMode": "array",
+          "accumulatorVariable": "accumulated",
+          "arrayPath": "data.items",
+          "errorHandling": "skip",
+          "indexVariable": "index",
+          "itemVariable": "item",
+          "iterationDelay": 0
+        }
+      },
+      "config": {
+        "accumulationMode": "array",
+        "accumulatorVariable": "accumulated",
+        "arrayPath": "data.items"
+      }
+    },
+    {
+      "id": "transform-item",
+      "type": "transform",
+      "label": "Extract Item Details",
+      "position": {
+        "x": -420,
+        "y": 630
+      },
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "item.orderId",
+                    "to": "orderId"
+                  },
+                  {
+                    "from": "item.customer",
+                    "to": "customer"
+                  },
+                  {
+                    "from": "item.date",
+                    "to": "date"
+                  },
+                  {
+                    "from": "item.name",
+                    "to": "name"
+                  },
+                  {
+                    "from": "item.price",
+                    "to": "price"
+                  },
+                  {
+                    "from": "item.qty",
+                    "to": "qty"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "transform-combine",
+      "type": "transform",
+      "label": "Build Order Summary",
+      "position": {
+        "x": -150,
+        "y": 780
+      },
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "accumulated.0.data.orderId",
+                    "to": "orderId"
+                  },
+                  {
+                    "from": "accumulated.0.data.customer",
+                    "to": "customer"
+                  },
+                  {
+                    "from": "accumulated.0.data.date",
+                    "to": "date"
+                  },
+                  {
+                    "from": "accumulated",
+                    "to": "accumulated"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "email-1",
+      "type": "email",
+      "label": "Send Report",
+      "position": {
+        "x": 150,
+        "y": 920
+      },
+      "data": {
+        "config": {
+          "to": "example@example.com",
+          "subject": "Daily Orders Report",
+          "body": "Daily Orders Report\n\n══════════════════════\n\n{{range $orderIndex, $order := .accumulated}}{{- $firstItem := index $order.accumulated 0 -}}\n\nOrder #{{add $orderIndex 1}}: {{$firstItem.orderId}}\n\n━━━━━━━━━━━━━━━━━━━━━━\n\nCustomer: {{$firstItem.customer}}\n\nDate: {{$firstItem.date}}\n\nItem Count: {{len $order.accumulated}}\n\nItems:\n\n{{range $itemIndex, $item := $order.accumulated}}\n\n  {{add $itemIndex 1}}. {{$item.orderId}} {{/* Removed redundant .accumulated */}}\n\n     Price: ${{$item.price}} × Qty: {{$item.qty}} = ${{mul $item.price $item.qty}}\n\n{{end}}\n\n{{end}}\n\n══════════════════════\n\nTotal Orders: {{len .accumulated}}",
+          "cc": "",
+          "bcc": "",
+          "isHtml": false,
+          "maxRetries": 3,
+          "provider": "resend",
+          "attachments": []
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {
+        "x": 150,
+        "y": 1060
+      },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "target": "json-1",
+      "type": "default"
+    },
+    {
+      "id": "e2",
+      "source": "json-1",
+      "target": "loop-accumulator-outer",
+      "targetHandle": "input",
+      "type": "default"
+    },
+    {
+      "id": "e3",
+      "source": "loop-accumulator-outer",
+      "sourceHandle": "loop-output",
+      "target": "transform-order",
+      "type": "default"
+    },
+    {
+      "id": "e4",
+      "source": "transform-order",
+      "target": "loop-accumulator-inner",
+      "targetHandle": "input",
+      "type": "default"
+    },
+    {
+      "id": "e5",
+      "source": "loop-accumulator-inner",
+      "sourceHandle": "loop-output",
+      "target": "transform-item",
+      "type": "default"
+    },
+    {
+      "id": "e6",
+      "source": "transform-item",
+      "target": "loop-accumulator-inner",
+      "targetHandle": "accumulator-input",
+      "type": "default"
+    },
+    {
+      "id": "e7",
+      "source": "loop-accumulator-inner",
+      "sourceHandle": "output",
+      "target": "transform-combine",
+      "type": "default"
+    },
+    {
+      "id": "e8",
+      "source": "transform-combine",
+      "target": "loop-accumulator-outer",
+      "targetHandle": "accumulator-input",
+      "type": "default"
+    },
+    {
+      "id": "e9",
+      "source": "loop-accumulator-outer",
+      "sourceHandle": "output",
+      "target": "email-1",
+      "type": "default"
+    },
+    {
+      "id": "e10",
+      "source": "email-1",
+      "target": "end-1",
+      "type": "default"
+    }
+  ]
+}

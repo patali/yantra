@@ -1,0 +1,168 @@
+{
+  "name": "HTTP API to Email Report (Example)",
+  "description": "Fetches users from JSONPlaceholder API, loops through them with a transform, and sends a formatted email report using template engine",
+  "category": "API Integration",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {
+        "x": 177.87194677842865,
+        "y": 139.11310777866717
+      },
+      "data": {
+        "config": {
+          "cronSchedule": "",
+          "timezone": "UTC",
+          "triggerType": "manual",
+          "webhookPath": "",
+          "webhookRequireAuth": false,
+          "webhookSecretConfigured": false
+        }
+      }
+    },
+    {
+      "id": "http-1",
+      "type": "http",
+      "label": "Fetch Users",
+      "position": {
+        "x": 131.06426867650126,
+        "y": 241.0339120756134
+      },
+      "data": {
+        "config": {
+          "method": "GET",
+          "url": "https://jsonplaceholder.typicode.com/users",
+          "headers": {},
+          "body": null,
+          "timeout": 30000,
+          "maxRetries": 3
+        }
+      }
+    },
+    {
+      "id": "loop-accumulator-1",
+      "type": "loop-accumulator",
+      "label": "Collect Results",
+      "position": {
+        "x": 120.14638143721578,
+        "y": 382.8960130539346
+      },
+      "data": {},
+      "config": {
+        "accumulationMode": "array",
+        "accumulatorVariable": "userList"
+      }
+    },
+    {
+      "id": "node-1",
+      "type": "transform",
+      "label": "Transform",
+      "position": {
+        "x": -155.97064104667226,
+        "y": 420.817143513358
+      },
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "index",
+                    "to": "index"
+                  },
+                  {
+                    "from": "item.name",
+                    "to": "name"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "label": "Transform"
+      }
+    },
+    {
+      "id": "email-1",
+      "type": "email",
+      "label": "Send Report",
+      "position": {
+        "x": 323.1661315127569,
+        "y": 572.7992747967044
+      },
+      "data": {
+        "config": {
+          "to": "example@example.com",
+          "subject": "UserList",
+          "body": "{{range .accumulated}}\n{{.index}}• {{.name}}\n{{end}}\n\nTotal: {{.iteration_count}} items",
+          "cc": "",
+          "bcc": "",
+          "isHtml": false,
+          "maxRetries": 3,
+          "provider": "resend",
+          "attachments": []
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {
+        "x": 253.20427291256777,
+        "y": 828.6107714591491
+      },
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "target": "http-1",
+      "type": "default"
+    },
+    {
+      "id": "vueflow__edge-http-1-loop-accumulator-1input",
+      "source": "http-1",
+      "sourceHandle": null,
+      "target": "loop-accumulator-1",
+      "targetHandle": "input",
+      "type": "default"
+    },
+    {
+      "id": "vueflow__edge-loop-accumulator-1loop-output-node-1",
+      "source": "loop-accumulator-1",
+      "sourceHandle": "loop-output",
+      "target": "node-1",
+      "targetHandle": null,
+      "type": "default"
+    },
+    {
+      "id": "vueflow__edge-node-1-loop-accumulator-1accumulator-input",
+      "source": "node-1",
+      "sourceHandle": null,
+      "target": "loop-accumulator-1",
+      "targetHandle": "accumulator-input",
+      "type": "default"
+    },
+    {
+      "id": "vueflow__edge-loop-accumulator-1output-email-1",
+      "source": "loop-accumulator-1",
+      "sourceHandle": "output",
+      "target": "email-1",
+      "targetHandle": null,
+      "type": "default"
+    },
+    {
+      "id": "e7",
+      "source": "email-1",
+      "target": "end-1",
+      "type": "default"
+    }
+  ]
+}
