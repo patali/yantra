@@ -67,7 +67,9 @@ const emit = defineEmits<{
 }>();
 
 const localConfig = ref({
-  data: props.modelValue?.data || "{}",
+  data: typeof props.modelValue?.data === "string"
+    ? props.modelValue.data
+    : JSON.stringify(props.modelValue?.data || {}, null, 2),
 });
 
 const validationError = ref<string>("");
@@ -80,7 +82,9 @@ watch(
   (newValue) => {
     if (newValue) {
       localConfig.value = {
-        data: newValue.data || "{}",
+        data: typeof newValue.data === "string"
+          ? newValue.data
+          : JSON.stringify(newValue.data || {}, null, 2),
       };
       validateJSON();
     }
@@ -94,7 +98,14 @@ const validateJSON = () => {
   dataType.value = "";
   dataPreview.value = "";
 
-  const jsonStr = localConfig.value.data?.trim();
+  // Handle both string and object/array data
+  let jsonStr: string;
+  if (typeof localConfig.value.data === "string") {
+    jsonStr = localConfig.value.data.trim();
+  } else {
+    // If it's already an object/array, stringify it
+    jsonStr = JSON.stringify(localConfig.value.data);
+  }
 
   if (!jsonStr) {
     validationError.value = "JSON data is required";
