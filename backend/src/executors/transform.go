@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/PaesslerAG/jsonpath"
@@ -111,11 +112,26 @@ func (e *TransformExecutor) extractWithJSONPath(config map[string]interface{}, d
 }
 
 // getNestedValue retrieves a value from a nested map using dot notation
+// Supports array indexing with numeric parts (e.g., "items.0.name")
 func (e *TransformExecutor) getNestedValue(data map[string]interface{}, path string) (interface{}, bool) {
 	parts := strings.Split(path, ".")
 	var current interface{} = data
 
 	for _, part := range parts {
+		// Try to parse as array index first
+		if idx, err := strconv.Atoi(part); err == nil {
+			// Current should be an array
+			if arr, ok := current.([]interface{}); ok {
+				if idx >= 0 && idx < len(arr) {
+					current = arr[idx]
+					continue
+				}
+				return nil, false
+			}
+			return nil, false
+		}
+
+		// Otherwise treat as map key
 		currentMap, ok := current.(map[string]interface{})
 		if !ok {
 			return nil, false
