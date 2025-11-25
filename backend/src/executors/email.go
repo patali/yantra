@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"text/template"
@@ -162,15 +163,24 @@ func (e *EmailExecutor) replaceTemplateVariables(text string, input interface{})
 
 // hasAdvancedTemplateFeatures checks if the template uses Go template engine features
 func (e *EmailExecutor) hasAdvancedTemplateFeatures(text string) bool {
-	advancedKeywords := []string{"{{range", "{{if", "{{with", "{{end", "{{else", "{{define", "{{template", "{{block"}
+	// Check for advanced keywords with flexible spacing
+	advancedKeywords := []string{"range", "if", "with", "end", "else", "define", "template", "block", "$"}
 	for _, keyword := range advancedKeywords {
-		if strings.Contains(text, keyword) {
+		// Match {{keyword or {{ keyword (with space after {{)
+		pattern := regexp.MustCompile(`\{\{\s*` + regexp.QuoteMeta(keyword) + `\s`)
+		if pattern.MatchString(text) {
+			log.Printf("✅ Detected Go template feature: %s", keyword)
 			return true
 		}
 	}
 	// Check if using dot notation like {{.variable}} which is Go template syntax
 	re := regexp.MustCompile(`\{\{\s*\.[A-Za-z_]`)
-	return re.MatchString(text)
+	if re.MatchString(text) {
+		log.Printf("✅ Detected Go template dot notation")
+		return true
+	}
+	log.Printf("⚠️ No Go template features detected, using simple template")
+	return false
 }
 
 // executeGoTemplate executes the template using Go's template engine
@@ -194,10 +204,27 @@ func (e *EmailExecutor) executeGoTemplate(text string, input interface{}) string
 		"upper": strings.ToUpper,
 		"lower": strings.ToLower,
 		"title": strings.Title,
+		"add": func(a, b interface{}) int {
+			return toInt(a) + toInt(b)
+		},
+		"sub": func(a, b interface{}) int {
+			return toInt(a) - toInt(b)
+		},
+		"mul": func(a, b interface{}) int {
+			return toInt(a) * toInt(b)
+		},
+		"div": func(a, b interface{}) int {
+			if toInt(b) == 0 {
+				return 0
+			}
+			return toInt(a) / toInt(b)
+		},
 	}).Parse(text)
 
 	if err != nil {
-		// If template parsing fails, return original text
+		// If template parsing fails, log error and return original text
+		log.Printf("❌ Email template parsing failed: %v", err)
+		log.Printf("Template text: %s", text)
 		return text
 	}
 
@@ -205,7 +232,9 @@ func (e *EmailExecutor) executeGoTemplate(text string, input interface{}) string
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, input)
 	if err != nil {
-		// If execution fails, return original text
+		// If execution fails, log error and return original text
+		log.Printf("❌ Email template execution failed: %v", err)
+		log.Printf("Input data: %+v", input)
 		return text
 	}
 
@@ -284,4 +313,29 @@ func (e *EmailExecutor) getValueFromPath(data interface{}, path string) interfac
 	}
 
 	return current
+}
+
+// toInt converts an interface{} value to int
+// Handles float64 (JSON numbers), int, and other numeric types
+func toInt(v interface{}) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	case float32:
+		return int(val)
+	case string:
+		// Try to parse string as int
+		if i, err := fmt.Sscanf(val, "%d", new(int)); err == nil && i == 1 {
+			var result int
+			fmt.Sscanf(val, "%d", &result)
+			return result
+		}
+		return 0
+	default:
+		return 0
+	}
 }
