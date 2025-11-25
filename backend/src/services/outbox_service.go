@@ -120,6 +120,7 @@ func (s *OutboxService) GetPendingMessages(limit int) ([]models.OutboxMessage, e
 	var messages []models.OutboxMessage
 	now := time.Now()
 
+	// Only fetch pending messages (exclude cancelled, completed, dead_letter, processing)
 	err := s.db.Where("status = ? AND next_retry_at <= ?", "pending", now).
 		Order("created_at ASC").
 		Limit(limit).
@@ -494,6 +495,76 @@ func (s *OutboxService) updateWorkflowStatusOnNodeFailure(tx *gorm.DB, execution
 	return nil
 }
 
+// CancelPendingMessagesForExecution cancels all pending/processing outbox messages for a given execution
+// This should be called when a workflow execution is cancelled to prevent orphaned side effects
+func (s *OutboxService) CancelPendingMessagesForExecution(executionID string) error {
+	log.Printf("🛑 Cancelling outbox messages for execution %s", executionID)
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// Find all pending or processing messages for this execution
+		var messages []models.OutboxMessage
+		err := tx.Table("outbox_messages").
+			Select("outbox_messages.*").
+			Joins("INNER JOIN workflow_node_executions ON workflow_node_executions.id = outbox_messages.node_execution_id").
+			Where("workflow_node_executions.execution_id = ?", executionID).
+			Where("outbox_messages.status IN ?", []string{"pending", "processing"}).
+			Find(&messages).Error
+
+		if err != nil {
+			return fmt.Errorf("failed to find outbox messages: %w", err)
+		}
+
+		if len(messages) == 0 {
+			log.Printf("  ℹ️  No pending outbox messages found for execution %s", executionID)
+			return nil
+		}
+
+		log.Printf("  🔄 Cancelling %d outbox message(s) for execution %s", len(messages), executionID)
+
+		// Update all pending/processing messages to cancelled status
+		now := time.Now()
+		err = tx.Model(&models.OutboxMessage{}).
+			Where("id IN ?", func() []string {
+				ids := make([]string, len(messages))
+				for i, msg := range messages {
+					ids[i] = msg.ID
+				}
+				return ids
+			}()).
+			Updates(map[string]interface{}{
+				"status":       "cancelled",
+				"last_error":   "Workflow execution was cancelled",
+				"processed_at": now,
+			}).Error
+
+		if err != nil {
+			return fmt.Errorf("failed to cancel outbox messages: %w", err)
+		}
+
+		// Update corresponding node executions
+		nodeExecIDs := make([]string, len(messages))
+		for i, msg := range messages {
+			nodeExecIDs[i] = msg.NodeExecutionID
+		}
+
+		err = tx.Model(&models.WorkflowNodeExecution{}).
+			Where("id IN ?", nodeExecIDs).
+			Where("status IN ?", []string{"pending", "running"}).
+			Updates(map[string]interface{}{
+				"status":       "cancelled",
+				"error":        "Workflow execution was cancelled",
+				"completed_at": now,
+			}).Error
+
+		if err != nil {
+			return fmt.Errorf("failed to cancel node executions: %w", err)
+		}
+
+		log.Printf("  ✅ Successfully cancelled %d outbox message(s) for execution %s", len(messages), executionID)
+		return nil
+	})
+}
+
 // VerifyIntegrity checks for orphaned messages and inconsistencies
 func (s *OutboxService) VerifyIntegrity() (map[string]int, error) {
 	result := make(map[string]int)
@@ -517,6 +588,11 @@ func (s *OutboxService) VerifyIntegrity() (map[string]int, error) {
 	var completedCount int64
 	s.db.Model(&models.OutboxMessage{}).Where("status = ?", "completed").Count(&completedCount)
 	result["completed_messages"] = int(completedCount)
+
+	// Count cancelled messages
+	var cancelledCount int64
+	s.db.Model(&models.OutboxMessage{}).Where("status = ?", "cancelled").Count(&cancelledCount)
+	result["cancelled_messages"] = int(cancelledCount)
 
 	return result, nil
 }

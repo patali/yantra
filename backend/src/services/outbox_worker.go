@@ -101,6 +101,12 @@ func (w *OutboxWorkerService) processMessage(ctx context.Context, message models
 	log.Printf("  ▶ Processing message %s (type: %s, attempt: %d)\n",
 		message.ID, message.EventType, message.Attempts+1)
 
+	// Skip cancelled messages (workflow was cancelled while message was pending)
+	if message.Status == "cancelled" {
+		log.Printf("  ⏭️  Skipping cancelled message %s\n", message.ID)
+		return
+	}
+
 	// Mark as processing
 	if err := w.outboxService.MarkMessageProcessing(message.ID); err != nil {
 		log.Printf("  ❌ Failed to mark message as processing: %v\n", err)

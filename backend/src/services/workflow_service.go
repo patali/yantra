@@ -883,6 +883,14 @@ func (s *WorkflowService) CancelWorkflowExecution(executionID string) error {
 		return fmt.Errorf("only running or queued executions can be cancelled")
 	}
 
+	// Cancel any pending outbox messages (async operations like email/Slack)
+	// This prevents orphaned side effects from executing after cancellation
+	outboxService := NewOutboxService(s.db)
+	if err := outboxService.CancelPendingMessagesForExecution(executionID); err != nil {
+		log.Printf("⚠️  Failed to cancel outbox messages for execution %s: %v", executionID, err)
+		// Continue with cancellation even if outbox cleanup fails
+	}
+
 	// Update execution status to cancelled
 	now := time.Now()
 	return s.repo.Execution().Update(ctx, executionID, map[string]interface{}{
@@ -965,4 +973,113 @@ func (s *WorkflowService) RestoreWorkflowVersion(id string, version int) error {
 // Helper function
 func stringPtr(s string) *string {
 	return &s
+}
+
+// ExampleWorkflow represents an example workflow template
+type ExampleWorkflow struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Category    string      `json:"category"`
+	Definition  interface{} `json:"definition"`
+}
+
+// GetExampleWorkflows returns all example workflows
+func (s *WorkflowService) GetExampleWorkflows() ([]ExampleWorkflow, error) {
+	examples := []struct {
+		id       string
+		filename string
+		category string
+	}{
+		{"http-transform-email", "http_transform_email.json", "API Integration"},
+		{"nested-loops-email", "nested_loops_email.json", "Data Processing"},
+		{"webhook-example", "webhook_example.json", "Webhooks"},
+		{"cron-scheduled", "cron_scheduled.json", "Scheduled Tasks"},
+		{"sleep-until-example", "sleep_until_example.json", "Long Running"},
+	}
+
+	var workflows []ExampleWorkflow
+	for _, ex := range examples {
+		// Read the example workflow file
+		data, err := executors.ReadExampleWorkflow(ex.filename)
+		if err != nil {
+			log.Printf("Failed to read example workflow %s: %v", ex.filename, err)
+			continue
+		}
+
+		// Parse the JSON
+		var definition map[string]interface{}
+		if err := json.Unmarshal(data, &definition); err != nil {
+			log.Printf("Failed to parse example workflow %s: %v", ex.filename, err)
+			continue
+		}
+
+		// Extract name and description from definition
+		name := "Example Workflow"
+		if n, ok := definition["name"].(string); ok {
+			name = n
+		}
+
+		description := ""
+		if d, ok := definition["description"].(string); ok {
+			description = d
+		}
+
+		workflows = append(workflows, ExampleWorkflow{
+			ID:          ex.id,
+			Name:        name,
+			Description: description,
+			Category:    ex.category,
+			Definition:  definition,
+		})
+	}
+
+	return workflows, nil
+}
+
+// DuplicateExampleWorkflow duplicates an example workflow to a user's account
+func (s *WorkflowService) DuplicateExampleWorkflow(ctx context.Context, exampleID, userID, accountID string) (*models.Workflow, error) {
+	// Get all example workflows
+	examples, err := s.GetExampleWorkflows()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get example workflows: %w", err)
+	}
+
+	// Find the requested example
+	var example *ExampleWorkflow
+	for i := range examples {
+		if examples[i].ID == exampleID {
+			example = &examples[i]
+			break
+		}
+	}
+
+	if example == nil {
+		return nil, fmt.Errorf("example workflow not found")
+	}
+
+	// Parse the definition
+	definition, ok := example.Definition.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid example workflow definition")
+	}
+
+	// Remove workflow-level config that should not be copied
+	delete(definition, "schedule")
+	delete(definition, "webhookPath")
+	delete(definition, "webhookRequireAuth")
+	delete(definition, "timezone")
+
+	// Extract name and description
+	name := example.Name
+	description := example.Description
+
+	// Create the workflow
+	createReq := dto.CreateWorkflowRequest{
+		Name:        name + " (Example)",
+		Description: &description,
+		Definition:  definition,
+	}
+
+	return s.CreateWorkflow(ctx, createReq, userID, accountID)
 }
