@@ -1462,11 +1462,26 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 			log.Printf("  ⚠️  Skipping iteration %d (failed or null result)", i)
 			// Continue to next iteration
 		} else {
+			// Extract the value to accumulate
+			// By default, unwrap "data" key if it exists (most executors wrap output in "data")
+			// Users can set "unwrapData" to false in config to keep the full output
+			var valueToAccumulate interface{} = iterationOutput
+			unwrapData := true // Default to true
+			if unwrap, ok := loopConfig["unwrapData"].(bool); ok {
+				unwrapData = unwrap
+			}
+
+			if unwrapData {
+				if dataValue, hasData := iterationOutput["data"]; hasData {
+					valueToAccumulate = dataValue
+				}
+			}
+
 			// Accumulate the result based on mode
 			if accumulationMode == "array" {
 				// Add to array
 				if accArray, ok := accumulated.([]interface{}); ok {
-					accumulated = append(accArray, iterationOutput)
+					accumulated = append(accArray, valueToAccumulate)
 
 					// Check accumulated data size to prevent memory abuse
 					if err := checkDataSize(accumulated, "accumulated data"); err != nil {
@@ -1475,7 +1490,7 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 				}
 			} else if accumulationMode == "last" {
 				// Replace with latest
-				accumulated = iterationOutput
+				accumulated = valueToAccumulate
 
 				// Check output size
 				if err := checkDataSize(accumulated, "accumulated data"); err != nil {
