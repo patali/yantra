@@ -1,0 +1,145 @@
+{
+  "name": "Webhook Handler Example",
+  "description": "Example workflow with conditional branching - routes to email or Slack based on success field",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "position": {
+        "x": 100,
+        "y": 100
+      },
+      "data": {
+        "config": {
+          "triggerType": "webhook",
+          "webhookPath": "example-webhook",
+          "webhookRequireAuth": true
+        }
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "position": {
+        "x": 100,
+        "y": 200
+      },
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "success",
+                    "to": "success"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "conditional-1",
+      "type": "conditional",
+      "position": {
+        "x": 100,
+        "y": 300
+      },
+      "data": {
+        "config": {
+          "conditions": [
+            {
+              "left": "success",
+              "operator": "eq",
+              "right": "true"
+            }
+          ],
+          "logicalOperator": "AND"
+        }
+      }
+    },
+    {
+      "id": "email-1",
+      "type": "email",
+      "position": {
+        "x": 50,
+        "y": 450
+      },
+      "data": {
+        "config": {
+          "to": "alerts@example.com",
+          "subject": "✅ Webhook Success",
+          "body": "The webhook request was successful!\n\nData: {{transform-1.data}}",
+          "contentType": "text/plain",
+          "provider": "resend"
+        }
+      }
+    },
+    {
+      "id": "slack-1",
+      "type": "slack",
+      "position": {
+        "x": 250,
+        "y": 450
+      },
+      "data": {
+        "config": {
+          "webhookUrl": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+          "channel": "#alerts",
+          "message": "⚠️ Webhook request failed: {{transform-1.data}}"
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "position": {
+        "x": 150,
+        "y": 600
+      },
+      "data": {
+        "config": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "target": "transform-1"
+    },
+    {
+      "id": "e2",
+      "source": "transform-1",
+      "target": "conditional-1"
+    },
+    {
+      "id": "e3",
+      "source": "conditional-1",
+      "target": "email-1",
+      "sourceHandle": "true",
+      "condition": "data.data == true"
+    },
+    {
+      "id": "e4",
+      "source": "conditional-1",
+      "target": "slack-1",
+      "sourceHandle": "false",
+      "condition": "data.data == false"
+    },
+    {
+      "id": "e5",
+      "source": "email-1",
+      "target": "end-1"
+    },
+    {
+      "id": "e6",
+      "source": "slack-1",
+      "target": "end-1"
+    }
+  ]
+}
