@@ -99,3 +99,184 @@ func TestConditionalExecutor(t *testing.T) {
 		})
 	}
 }
+
+// TestConditionalExecutorStructuredFormat tests the conditional executor with structured conditions from frontend
+func TestConditionalExecutorStructuredFormat(t *testing.T) {
+	executor := NewConditionalExecutor()
+
+	tests := []struct {
+		name         string
+		nodeConfig   map[string]interface{}
+		input        interface{}
+		workflowData map[string]interface{}
+		wantSuccess  bool
+		wantResult   bool
+		wantError    string
+	}{
+		{
+			name: "Simple equals condition",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "data.success",
+						"operator": "eq",
+						"right":    "true",
+					},
+				},
+				"logicalOperator": "AND",
+			},
+			input: map[string]interface{}{
+				"data": map[string]interface{}{
+					"success": true,
+				},
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Greater than condition",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "count",
+						"operator": "gt",
+						"right":    "5",
+					},
+				},
+				"logicalOperator": "AND",
+			},
+			workflowData: map[string]interface{}{
+				"count": 10,
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Multiple conditions with AND",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "age",
+						"operator": "gte",
+						"right":    "18",
+					},
+					map[string]interface{}{
+						"left":     "status",
+						"operator": "eq",
+						"right":    "active",
+					},
+				},
+				"logicalOperator": "AND",
+			},
+			workflowData: map[string]interface{}{
+				"age":    25,
+				"status": "active",
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Multiple conditions with OR (one true)",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "isAdmin",
+						"operator": "eq",
+						"right":    "true",
+					},
+					map[string]interface{}{
+						"left":     "isModerator",
+						"operator": "eq",
+						"right":    "true",
+					},
+				},
+				"logicalOperator": "OR",
+			},
+			workflowData: map[string]interface{}{
+				"isAdmin":     false,
+				"isModerator": true,
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Exists condition",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "userId",
+						"operator": "exists",
+					},
+				},
+				"logicalOperator": "AND",
+			},
+			workflowData: map[string]interface{}{
+				"userId": "12345",
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Not equals condition",
+			nodeConfig: map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"left":     "status",
+						"operator": "neq",
+						"right":    "failed",
+					},
+				},
+				"logicalOperator": "AND",
+			},
+			workflowData: map[string]interface{}{
+				"status": "success",
+			},
+			wantSuccess: true,
+			wantResult:  true,
+		},
+		{
+			name: "Empty conditions array",
+			nodeConfig: map[string]interface{}{
+				"conditions":      []interface{}{},
+				"logicalOperator": "AND",
+			},
+			wantSuccess: false,
+			wantError:   "condition not specified",
+		},
+		{
+			name: "Missing conditions field",
+			nodeConfig: map[string]interface{}{
+				"logicalOperator": "AND",
+			},
+			wantSuccess: false,
+			wantError:   "condition not specified",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			execCtx := ExecutionContext{
+				NodeID:       "conditional-node",
+				NodeConfig:   tt.nodeConfig,
+				Input:        tt.input,
+				WorkflowData: tt.workflowData,
+				ExecutionID:  "test-execution",
+				AccountID:    "test-account",
+			}
+
+			result, err := executor.Execute(context.Background(), execCtx)
+
+			if tt.wantError != "" {
+				assert.NoError(t, err)
+				assert.False(t, result.Success)
+				assert.Contains(t, result.Error, tt.wantError)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantSuccess, result.Success)
+				if tt.wantSuccess {
+					assert.Equal(t, tt.wantResult, result.Output["data"])
+				}
+			}
+		})
+	}
+}
