@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PaesslerAG/gval"
 	"github.com/patali/yantra/src/db/models"
 	"github.com/patali/yantra/src/executors"
 	"gorm.io/gorm"
@@ -65,6 +66,72 @@ func checkDataSize(data interface{}, dataType string) error {
 	}
 
 	return nil
+}
+
+// checkEdgeCondition evaluates an edge condition to determine if the target node should execute
+func (s *WorkflowEngineService) checkEdgeCondition(edges []interface{}, sourceNodeID, targetNodeID string, nodeOutputs map[string]interface{}) bool {
+	// Find the edge between source and target
+	for _, edgeData := range edges {
+		edge, ok := edgeData.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		source, _ := edge["source"].(string)
+		target, _ := edge["target"].(string)
+
+		// Check if this is the edge we're looking for
+		if source == sourceNodeID && target == targetNodeID {
+			// Check if there's a condition on this edge
+			condition, hasCondition := edge["condition"].(string)
+			if !hasCondition || condition == "" {
+				// No condition means always execute
+				return true
+			}
+
+			// Build evaluation context with node outputs
+			evalContext := make(map[string]interface{})
+
+			// Add source node output to context
+			if sourceOutput, ok := nodeOutputs[sourceNodeID].(map[string]interface{}); ok {
+				// Add as "data" for easy access to conditional results
+				evalContext["data"] = sourceOutput
+
+				// Also add individual fields to root level (but skip "data" to avoid overwriting)
+				for k, v := range sourceOutput {
+					// Don't overwrite the "data" key we just set above
+					if k != "data" {
+						evalContext[k] = v
+					}
+				}
+			}
+
+			// Add all node outputs for access via nodeId.field
+			for nodeID, output := range nodeOutputs {
+				evalContext[nodeID] = output
+			}
+
+			// Evaluate the condition
+			result, err := gval.Evaluate(condition, evalContext)
+			if err != nil {
+				log.Printf("  ⚠️  Failed to evaluate edge condition '%s': %v (defaulting to false)", condition, err)
+				return false
+			}
+
+			// Convert to boolean
+			boolResult, ok := result.(bool)
+			if !ok {
+				log.Printf("  ⚠️  Edge condition '%s' did not evaluate to boolean (got %T), defaulting to false", condition, result)
+				return false
+			}
+
+			log.Printf("  🔍 Edge condition '%s' evaluated to: %v", condition, boolResult)
+			return boolResult
+		}
+	}
+
+	// No edge found or no condition - default to true
+	return true
 }
 
 // checkExecutionLimits validates execution hasn't exceeded limits
@@ -431,11 +498,17 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 				}
 			}
 
-			// Mark as executed and add children to queue
+			// Mark as executed and add children to queue (check edge conditions)
 			executed[currentNodeID] = true
 			for _, nextNodeID := range adjacencyList[currentNodeID] {
 				if !executed[nextNodeID] {
-					queue = append(queue, nextNodeID)
+					// Check edge conditions even when resuming from checkpoint
+					shouldAdd := s.checkEdgeCondition(edges, currentNodeID, nextNodeID, nodeOutputs)
+					if shouldAdd {
+						queue = append(queue, nextNodeID)
+					} else {
+						log.Printf("  ⏭️  Skipping node %s (edge condition not satisfied on resume)", nextNodeID)
+					}
 				}
 			}
 			continue
@@ -544,9 +617,16 @@ func (s *WorkflowEngineService) executeWorkflowDefinition(ctx context.Context, e
 		// Add next nodes to queue (for non-loop nodes that didn't use continue)
 		// IMPORTANT: This must happen BEFORE checking for sleeping state to ensure
 		// that when workflow resumes, next nodes are properly queued
+		// Check edge conditions before adding nodes to queue
 		for _, nextNodeID := range adjacencyList[currentNodeID] {
 			if !executed[nextNodeID] {
-				queue = append(queue, nextNodeID)
+				// Check if there's an edge condition that needs to be satisfied
+				shouldAdd := s.checkEdgeCondition(edges, currentNodeID, nextNodeID, nodeOutputs)
+				if shouldAdd {
+					queue = append(queue, nextNodeID)
+				} else {
+					log.Printf("  ⏭️  Skipping node %s (edge condition not satisfied)", nextNodeID)
+				}
 			}
 		}
 
@@ -1199,9 +1279,18 @@ func (s *WorkflowEngineService) executeSubgraph(
 		// Update current output for next node in chain
 		currentOutput = output
 
-		// Add child nodes to queue
+		// Add child nodes to queue (check edge conditions in subgraph)
+		// Note: In loop subgraphs, we typically don't have conditional edges,
+		// but we should still check for completeness
 		for _, nextNodeID := range adjacencyList[nodeID] {
-			queue = append(queue, nextNodeID)
+			// For subgraphs, we use a simple nodeOutputs map
+			subgraphNodeOutputs := map[string]interface{}{
+				nodeID: currentOutput,
+			}
+			shouldAdd := s.checkEdgeCondition(edges, nodeID, nextNodeID, subgraphNodeOutputs)
+			if shouldAdd {
+				queue = append(queue, nextNodeID)
+			}
 		}
 	}
 
@@ -1693,7 +1782,15 @@ func (s *WorkflowEngineService) executeSubgraphAndGetOutputWithParent(
 				log.Printf("    🔙 Skipping edge to parent loop node %s", nextNodeID)
 				continue
 			}
-			queue = append(queue, nextNodeID)
+
+			// Check edge conditions
+			subgraphNodeOutputs := map[string]interface{}{
+				nodeID: currentOutput,
+			}
+			shouldAdd := s.checkEdgeCondition(edges, nodeID, nextNodeID, subgraphNodeOutputs)
+			if shouldAdd {
+				queue = append(queue, nextNodeID)
+			}
 		}
 	}
 
