@@ -1,0 +1,111 @@
+{
+  "name": "Sleep Node with Time Tracking Example",
+  "description": "Demonstrates using sleep node to pause workflow and track elapsed time using the examples/time endpoint",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Start",
+      "position": {"x": 100, "y": 200},
+      "data": {
+        "config": {}
+      }
+    },
+    {
+      "id": "http-1",
+      "type": "http",
+      "label": "Get Start Time",
+      "position": {"x": 250, "y": 200},
+      "data": {
+        "config": {
+          "url": "http://localhost:3000/api/examples/time",
+          "method": "GET",
+          "headers": {},
+          "timeout": 30000,
+          "maxRetries": 3
+        }
+      }
+    },
+    {
+      "id": "sleep-1",
+      "type": "sleep",
+      "label": "Wait 30 Seconds",
+      "position": {"x": 400, "y": 200},
+      "data": {
+        "config": {
+          "mode": "relative",
+          "duration_value": 30,
+          "duration_unit": "seconds",
+          "timezone": "UTC"
+        }
+      }
+    },
+    {
+      "id": "http-2",
+      "type": "http",
+      "label": "Get End Time (with old time param)",
+      "position": {"x": 550, "y": 200},
+      "data": {
+        "config": {
+          "url": "http://localhost:3000/api/examples/time?oldtime={{input.datetime}}",
+          "method": "GET",
+          "headers": {},
+          "timeout": 30000,
+          "maxRetries": 3
+        }
+      }
+    },
+    {
+      "id": "email-1",
+      "type": "email",
+      "label": "Send Time Comparison Report",
+      "position": {"x": 700, "y": 200},
+      "data": {
+        "config": {
+          "to": "test@example.com",
+          "subject": "Sleep Node Test - Time Comparison Report",
+          "body": "Sleep Node Test Completed!\n\n=== Time Comparison ===\n\nOld Time (from query param): {{data.params.oldtime}}\nNew Time (current): {{data.datetime}}\n\n=== Detailed Timestamps ===\n\nStart Timestamp (Unix): First call returned timestamp\nEnd Timestamp (Unix): {{data.timestamp}}\n\nStart Time (ISO): {{data.params.oldtime}}\nEnd Time (ISO): {{data.iso8601}}\n\nEnd Time (UTC): {{data.utc.iso8601}}\nEnd Time (RFC1123): {{data.rfc1123}}\n\n=== What This Demonstrates ===\n\n1. HTTP node fetches initial time from /api/examples/time\n2. Sleep node pauses workflow for 30 seconds while preserving all data\n3. Second HTTP node uses preserved data in URL template: {{input.datetime}}\n4. Examples endpoint echoes the oldtime parameter back in params.oldtime\n5. Email node accesses nested data using {{data.params.oldtime}} syntax\n\nThe time difference shows the workflow successfully paused and resumed!",
+          "contentType": "text/plain",
+          "provider": "resend",
+          "maxRetries": 3
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 850, "y": 200},
+      "data": {
+        "config": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "target": "http-1"
+    },
+    {
+      "id": "e2",
+      "source": "http-1",
+      "target": "sleep-1"
+    },
+    {
+      "id": "e3",
+      "source": "sleep-1",
+      "target": "http-2"
+    },
+    {
+      "id": "e4",
+      "source": "http-2",
+      "target": "email-1"
+    },
+    {
+      "id": "e5",
+      "source": "email-1",
+      "target": "end-1"
+    }
+  ]
+}
