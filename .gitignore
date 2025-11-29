@@ -99,5 +99,4 @@ tmp/
 
 # Local configuration files
 config.local.*
-server
 yantra-server
