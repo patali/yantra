@@ -470,4 +470,110 @@ func TestSleepExecutor(t *testing.T) {
 		expectedWakeUp := before.Add(36 * time.Hour)
 		assert.WithinDuration(t, expectedWakeUp, *result.WakeUpAt, 1*time.Second)
 	})
+
+	t.Run("Input passthrough - relative mode", func(t *testing.T) {
+		// Simulate input from a previous node (like JSON node) that wraps data in "data" field
+		inputData := map[string]interface{}{
+			"data": map[string]interface{}{
+				"userId":    12345,
+				"taskId":    "task-abc",
+				"timestamp": "2025-11-29T10:00:00Z",
+				"nested": map[string]interface{}{
+					"field1": "value1",
+					"field2": 42,
+				},
+			},
+		}
+
+		execCtx := ExecutionContext{
+			NodeID: "sleep-node",
+			NodeConfig: map[string]interface{}{
+				"mode":           "relative",
+				"duration_value": 5.0,
+				"duration_unit":  "minutes",
+			},
+			Input:       inputData,
+			ExecutionID: "test-execution",
+			AccountID:   "test-account",
+		}
+
+		result, err := executor.Execute(context.Background(), execCtx)
+
+		assert.Nil(t, err)
+		assert.True(t, result.Success)
+		assert.True(t, result.NeedsSleep)
+
+		// Verify input data fields are merged into output (not nested)
+		assert.Equal(t, 12345, result.Output["userId"])
+		assert.Equal(t, "task-abc", result.Output["taskId"])
+		assert.Equal(t, "2025-11-29T10:00:00Z", result.Output["timestamp"])
+
+		// Verify nested data is preserved
+		nestedMap, ok := result.Output["nested"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, "value1", nestedMap["field1"])
+		assert.Equal(t, 42, nestedMap["field2"])
+
+		// Verify sleep metadata is also present
+		assert.Contains(t, result.Output, "sleep_scheduled_until")
+		assert.Contains(t, result.Output, "sleep_duration_ms")
+		assert.Equal(t, "relative", result.Output["mode"])
+	})
+
+	t.Run("Input passthrough - absolute mode (past time)", func(t *testing.T) {
+		inputData := map[string]interface{}{
+			"data": map[string]interface{}{
+				"userId": 99999,
+				"action": "test",
+			},
+		}
+
+		pastTime := time.Now().UTC().Add(-24 * time.Hour)
+		execCtx := ExecutionContext{
+			NodeID: "sleep-node",
+			NodeConfig: map[string]interface{}{
+				"mode":        "absolute",
+				"target_date": pastTime.Format(time.RFC3339),
+			},
+			Input:       inputData,
+			ExecutionID: "test-execution",
+			AccountID:   "test-account",
+		}
+
+		result, err := executor.Execute(context.Background(), execCtx)
+
+		assert.Nil(t, err)
+		assert.True(t, result.Success)
+		assert.False(t, result.NeedsSleep) // Should NOT need sleep
+
+		// Verify input data fields are merged into output
+		assert.Equal(t, 99999, result.Output["userId"])
+		assert.Equal(t, "test", result.Output["action"])
+
+		// Verify sleep metadata is also present
+		assert.True(t, result.Output["sleep_skipped"].(bool))
+	})
+
+	t.Run("Input passthrough - nil input", func(t *testing.T) {
+		execCtx := ExecutionContext{
+			NodeID: "sleep-node",
+			NodeConfig: map[string]interface{}{
+				"mode":           "relative",
+				"duration_value": 1.0,
+				"duration_unit":  "seconds",
+			},
+			Input:       nil, // No input data
+			ExecutionID: "test-execution",
+			AccountID:   "test-account",
+		}
+
+		result, err := executor.Execute(context.Background(), execCtx)
+
+		assert.Nil(t, err)
+		assert.True(t, result.Success)
+
+		// With nil input, only sleep metadata should be present
+		assert.Contains(t, result.Output, "sleep_scheduled_until")
+		assert.NotContains(t, result.Output, "userId") // No user data
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -23,13 +24,13 @@ func NewHTTPExecutor(client *http.Client) *HTTPExecutor {
 
 func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*ExecutionResult, error) {
 	// Get URL and method from config
-	url, ok := execCtx.NodeConfig["url"].(string)
-	if !ok || url == "" {
+	urlStr, ok := execCtx.NodeConfig["url"].(string)
+	if !ok || urlStr == "" {
 		return nil, fmt.Errorf("url is required")
 	}
 
-	// Replace template variables in URL with input data
-	url = e.replaceTemplateVariables(url, execCtx.Input)
+	// Replace template variables in URL with URL-encoded values
+	urlStr = e.replaceTemplateVariablesWithEncoding(urlStr, execCtx.Input, true)
 
 	method, ok := execCtx.NodeConfig["method"].(string)
 	if !ok || method == "" {
@@ -37,13 +38,13 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}
 	method = strings.ToUpper(method)
 
-	// Get headers and replace template variables
+	// Get headers and replace template variables (no URL encoding for headers)
 	headers := make(map[string]string)
 	if h, ok := execCtx.NodeConfig["headers"].(map[string]interface{}); ok {
 		for k, v := range h {
 			if strVal, ok := v.(string); ok {
-				// Replace template variables in header values
-				headers[k] = e.replaceTemplateVariables(strVal, execCtx.Input)
+				// Replace template variables in header values without encoding
+				headers[k] = e.replaceTemplateVariablesWithEncoding(strVal, execCtx.Input, false)
 			}
 		}
 	}
@@ -54,8 +55,8 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 		if body, ok := execCtx.NodeConfig["body"]; ok {
 			// If body is already a string, use it directly (after replacing variables)
 			if bodyStr, ok := body.(string); ok {
-				// Replace template variables in body
-				replacedBody := e.replaceTemplateVariables(bodyStr, execCtx.Input)
+				// Replace template variables in body without URL encoding
+				replacedBody := e.replaceTemplateVariablesWithEncoding(bodyStr, execCtx.Input, false)
 				bodyReader = strings.NewReader(replacedBody)
 			} else {
 				// Otherwise, marshal to JSON
@@ -73,7 +74,7 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -106,7 +107,7 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	// Build output
 	output := map[string]interface{}{
 		"status_code": resp.StatusCode,
-		"url":         url,
+		"url":         urlStr,
 		"method":      method,
 		"data":        data,
 		"headers":     resp.Header,
@@ -128,8 +129,9 @@ func (e *HTTPExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (*
 	}, nil
 }
 
-// replaceTemplateVariables replaces {{variable}} patterns with values from input
-func (e *HTTPExecutor) replaceTemplateVariables(text string, input interface{}) string {
+// replaceTemplateVariablesWithEncoding replaces {{variable}} patterns with values from input
+// If urlEncode is true, values are URL-encoded to handle spaces and special characters
+func (e *HTTPExecutor) replaceTemplateVariablesWithEncoding(text string, input interface{}, urlEncode bool) string {
 	// Match patterns like {{input.field}} or {{variable}}
 	re := regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
@@ -142,7 +144,12 @@ func (e *HTTPExecutor) replaceTemplateVariables(text string, input interface{}) 
 
 		// Convert to string
 		if value != nil {
-			return fmt.Sprintf("%v", value)
+			strValue := fmt.Sprintf("%v", value)
+			if urlEncode {
+				// URL-encode the value to handle spaces and special characters
+				return url.QueryEscape(strValue)
+			}
+			return strValue
 		}
 
 		// If not found, keep the original placeholder
@@ -152,8 +159,15 @@ func (e *HTTPExecutor) replaceTemplateVariables(text string, input interface{}) 
 	return result
 }
 
+// replaceTemplateVariables replaces {{variable}} patterns with values from input (no encoding)
+// Kept for backward compatibility with tests
+func (e *HTTPExecutor) replaceTemplateVariables(text string, input interface{}) string {
+	return e.replaceTemplateVariablesWithEncoding(text, input, false)
+}
+
 // getValueFromPath navigates through nested objects to get a value
-// Supports paths like "input.field", "field.nested", "index", etc.
+// Supports paths like "input.field", "field.nested", "field", etc.
+// Special handling: if path starts with "input." and input is a map, try without the "input." prefix
 func (e *HTTPExecutor) getValueFromPath(data interface{}, path string) interface{} {
 	parts := strings.Split(path, ".")
 	current := data
@@ -171,6 +185,12 @@ func (e *HTTPExecutor) getValueFromPath(data interface{}, path string) interface
 		}
 
 		if current == nil {
+			// Special case: if path started with "input." and we couldn't find it,
+			// try without the "input." prefix (for backward compatibility)
+			if len(parts) > 1 && parts[0] == "input" {
+				// Retry without "input." prefix
+				return e.getValueFromPath(data, strings.Join(parts[1:], "."))
+			}
 			return nil
 		}
 	}

@@ -55,33 +55,39 @@ func (e *SleepExecutor) Execute(ctx context.Context, execCtx ExecutionContext) (
 	now := time.Now().UTC()
 	if wakeUpTime.Before(now) || wakeUpTime.Equal(now) {
 		// Complete immediately - target time already passed
+		// Start with the input data and merge in sleep metadata
+		output := e.mergeInputWithMetadata(execCtx.Input, map[string]interface{}{
+			"data":          true, // Primary output: sleep completed (true/false)
+			"slept_until":   wakeUpTime.Format(time.RFC3339),
+			"sleep_skipped": true,
+			"reason":        "target time already passed",
+			"mode":          mode,
+		})
+
 		return &ExecutionResult{
 			Success: true,
-			Output: map[string]interface{}{
-				"data":          true,  // Primary output: sleep completed (true/false)
-				"slept_until":   wakeUpTime.Format(time.RFC3339),
-				"sleep_skipped": true,
-				"reason":        "target time already passed",
-				"mode":          mode,
-			},
+			Output:  output,
 		}, nil
 	}
 
 	// Calculate sleep duration for output
 	sleepDuration := wakeUpTime.Sub(now)
 
+	// Start with the input data and merge in sleep metadata
+	output := e.mergeInputWithMetadata(execCtx.Input, map[string]interface{}{
+		"data":                  wakeUpTime.Format(time.RFC3339), // Primary output: wake-up time
+		"sleep_scheduled_until": wakeUpTime.Format(time.RFC3339),
+		"sleep_duration_ms":     sleepDuration.Milliseconds(),
+		"mode":                  mode,
+		"scheduled_at":          now.Format(time.RFC3339),
+	})
+
 	// Signal that this node needs to sleep
 	return &ExecutionResult{
 		Success:    true,
 		NeedsSleep: true,
 		WakeUpAt:   &wakeUpTime,
-		Output: map[string]interface{}{
-			"data":                  wakeUpTime.Format(time.RFC3339),  // Primary output: wake-up time
-			"sleep_scheduled_until": wakeUpTime.Format(time.RFC3339),
-			"sleep_duration_ms":     sleepDuration.Milliseconds(),
-			"mode":                  mode,
-			"scheduled_at":          now.Format(time.RFC3339),
-		},
+		Output:     output,
 	}, nil
 }
 
@@ -185,4 +191,39 @@ func (e *SleepExecutor) calculateRelativeWakeUp(config map[string]interface{}) (
 	wakeUpTime := now.Add(duration)
 
 	return wakeUpTime, nil
+}
+
+// mergeInputWithMetadata merges the input data with sleep metadata
+// If input is a map, it spreads the input fields into the output alongside metadata
+// If input.data exists and is a map, those fields are also merged at the top level
+func (e *SleepExecutor) mergeInputWithMetadata(input interface{}, metadata map[string]interface{}) map[string]interface{} {
+	output := make(map[string]interface{})
+
+	// First, copy metadata (this includes the sleep node's "data" field)
+	for k, v := range metadata {
+		output[k] = v
+	}
+
+	// Then merge input data
+	if inputMap, ok := input.(map[string]interface{}); ok {
+		// If input has a "data" field that's a map, merge those fields at top level
+		if inputData, ok := inputMap["data"].(map[string]interface{}); ok {
+			for k, v := range inputData {
+				if _, exists := output[k]; !exists { // Don't override metadata fields
+					output[k] = v
+				}
+			}
+		}
+
+		// Also merge other top-level fields from input (like from conditionals, loops, etc.)
+		for k, v := range inputMap {
+			if k != "data" { // Skip "data" as we handled it above
+				if _, exists := output[k]; !exists { // Don't override metadata fields
+					output[k] = v
+				}
+			}
+		}
+	}
+
+	return output
 }
