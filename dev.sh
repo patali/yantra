@@ -89,17 +89,25 @@ if tmux has-session -t $SESSION_NAME 2>/dev/null; then
 fi
 
 # Check for environment variables
-if [ ! -f "$SCRIPT_DIR/.env" ]; then
-    print_warning "No .env file found. Using default environment variables."
-    print_info "You may want to create a .env file with:"
+# The backend uses godotenv.Load() which loads from CWD (backend/)
+if [ ! -f "$BACKEND_DIR/.env" ]; then
+    print_warning "No .env file found in backend directory."
+    print_info "You may want to create backend/.env with:"
     echo "  DATABASE_URL=postgresql://yantra:password@localhost:5432/yantra?sslmode=disable"
     echo "  JWT_SECRET=your-secure-jwt-secret-min-32-chars-long"
+    echo ""
+    print_info "Or copy from env.example:"
+    echo "  cp env.example backend/.env"
     echo ""
 fi
 
 # Check if PostgreSQL is accessible (optional check)
 print_info "Checking database connection..."
 if command -v psql &> /dev/null; then
+    # Try to get DATABASE_URL from backend/.env if it exists
+    if [ -f "$BACKEND_DIR/.env" ]; then
+        source <(grep -E '^DATABASE_URL=' "$BACKEND_DIR/.env" | sed 's/^/export /')
+    fi
     DB_URL=${DATABASE_URL:-"postgresql://yantra:yantra_dev_password@localhost:5432/yantra?sslmode=disable"}
     # Extract connection details (simple parsing)
     if [[ $DB_URL =~ postgresql://([^:]+):([^@]+)@([^:]+):([^/]+)/([^?]+) ]]; then
@@ -166,9 +174,9 @@ tmux send-keys -t $SESSION_NAME:0.0 "echo '🚀 Starting Yantra Backend...'" C-m
 tmux send-keys -t $SESSION_NAME:0.0 "echo 'Working directory: \$(pwd)'" C-m
 tmux send-keys -t $SESSION_NAME:0.0 "echo ''" C-m
 
-# Load .env if exists
-if [ -f "$SCRIPT_DIR/.env" ]; then
-    tmux send-keys -t $SESSION_NAME:0.0 "export \$(cat '$SCRIPT_DIR/.env' | grep -v '^#' | xargs)" C-m
+# Load .env if exists from backend directory (where godotenv.Load() looks)
+if [ -f "$BACKEND_DIR/.env" ]; then
+    tmux send-keys -t $SESSION_NAME:0.0 "export \$(cat '$BACKEND_DIR/.env' | grep -v '^#' | xargs)" C-m
 fi
 
 # Set default environment variables if not set
