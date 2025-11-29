@@ -12,6 +12,9 @@ Yantra lets you design and execute workflows using a visual, node-based editor. 
 - 🔄 **Flexible Triggers** - Manual, scheduled (cron), webhooks, API calls
 - 📊 **Comprehensive Monitoring** - Real-time execution tracking, history, debugging
 
+![Yantra workflow editor screenshot](docs/demo-workflow.jpg)
+
+
 ## Quick Start
 
 ### With Docker (Recommended)
@@ -27,8 +30,8 @@ psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE yantra TO yantra;"
 2. **Configure environment:**
 
 ```bash
-cp env.example .env
-# Edit .env with your database credentials
+cp env.example backend/.env
+# Edit backend/.env with your database credentials
 ```
 
 3. **Start services:**
@@ -43,7 +46,14 @@ docker-compose up --build
 
 ### Without Docker
 
-Use the tmux development script for local development:
+1. **Configure environment:**
+
+```bash
+cp env.example backend/.env
+# Edit backend/.env with your database credentials
+```
+
+2. **Use the tmux development script:**
 
 ```bash
 ./dev.sh
@@ -59,7 +69,9 @@ This runs both backend and frontend in a split tmux session.
 ```
 yantra/
 ├── backend/          # Go backend server
+│   └── .env          # Backend environment variables (copy from env.example)
 ├── frontend/         # Vue.js frontend application
+│   └── .env          # Frontend environment variables (copy from env.example)
 ├── docs/             # Documentation
 ├── dev.sh            # Development script (tmux)
 ├── docker-compose.yml
@@ -155,7 +167,7 @@ We welcome contributions!
 
 ## License
 
-[MIT LICENSE](./LICENSE)
+[MIT LICENSE](./LICENSE.md)
 
 ## Support
 
