@@ -119,12 +119,6 @@ cd backend
 go test ./...
 ```
 
-**Frontend:**
-```bash
-cd frontend
-npm run test
-```
-
 ## Configuration
 
 Key environment variables:
@@ -161,14 +155,10 @@ We welcome contributions!
 
 ## License
 
-[Add your license here]
+[MIT LICENSE](./LICENSE)
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/yantra/issues)
+- **Issues**: [GitHub Issues](https://github.com/patali/yantra/issues)
 - **Documentation**: [docs/](./docs/)
-- **Email**: support@example.com
-
 ---
-
-**Built with ❤️ for workflow automation**
