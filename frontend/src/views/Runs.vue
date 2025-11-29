@@ -71,7 +71,7 @@
             hover
           >
             <!-- Workflow Name Column -->
-            <template #item.workflow="{ item }">
+            <template #[`item.workflow`]="{ item }">
               <div class="d-flex align-center">
                 <v-icon
                   size="small"
@@ -84,7 +84,7 @@
             </template>
 
             <!-- Status Column -->
-            <template #item.status="{ item }">
+            <template #[`item.status`]="{ item }">
               <v-chip
                 :color="getStatusColor(item.status)"
                 size="small"
@@ -103,7 +103,7 @@
             </template>
 
             <!-- Trigger Type Column -->
-            <template #item.triggerType="{ item }">
+            <template #[`item.triggerType`]="{ item }">
               <v-chip
                 size="small"
                 variant="outlined"
@@ -119,21 +119,21 @@
             </template>
 
             <!-- Started At Column -->
-            <template #item.startedAt="{ item }">
+            <template #[`item.startedAt`]="{ item }">
               <div class="text-caption">
                 {{ formatDateTime(item.startedAt) }}
               </div>
             </template>
 
             <!-- Duration Column -->
-            <template #item.duration="{ item }">
+            <template #[`item.duration`]="{ item }">
               <div class="text-caption">
                 {{ getDuration(item) }}
               </div>
             </template>
 
             <!-- Node Stats Column -->
-            <template #item.nodeStats="{ item }">
+            <template #[`item.nodeStats`]="{ item }">
               <div class="text-caption">
                 <v-icon
                   v-if="getSuccessNodeCount(item) > 0"
@@ -158,7 +158,7 @@
             </template>
 
             <!-- Actions Column -->
-            <template #item.actions="{ item }">
+            <template #[`item.actions`]="{ item }">
               <div class="d-flex gap-1">
                 <v-tooltip location="top">
                   <template #activator="{ props }">
