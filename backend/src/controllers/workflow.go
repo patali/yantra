@@ -59,6 +59,10 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 
 	// Webhook secret management (requires auth)
 	workflows.POST("/:id/webhook-secret/regenerate", ctrl.RegenerateWebhookSecret)
+
+	// Example workflows (requires auth)
+	rg.GET("/examples/workflows", middleware.AuthMiddleware(authService), ctrl.GetExampleWorkflows)
+	rg.POST("/examples/workflows/:exampleId/duplicate", middleware.AuthMiddleware(authService), ctrl.DuplicateExampleWorkflow)
 }
 
 // GetAllWorkflows returns all workflows for the current account
@@ -522,6 +526,40 @@ func (ctrl *WorkflowController) DuplicateWorkflow(c *gin.Context) {
 	}
 
 	middleware.RespondSuccess(c, http.StatusCreated, duplicatedWorkflow)
+}
+
+// GetExampleWorkflows returns all example workflow templates
+// GET /api/examples/workflows
+func (ctrl *WorkflowController) GetExampleWorkflows(c *gin.Context) {
+	examples, err := ctrl.workflowService.GetExampleWorkflows()
+	if err != nil {
+		middleware.RespondInternalError(c, "Failed to fetch example workflows")
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusOK, examples)
+}
+
+// DuplicateExampleWorkflow duplicates an example workflow to user's account
+// POST /api/examples/workflows/:exampleId/duplicate
+func (ctrl *WorkflowController) DuplicateExampleWorkflow(c *gin.Context) {
+	exampleID := c.Param("exampleId")
+	accountID, err := middleware.RequireAccountID(c)
+	if err != nil {
+		return
+	}
+	userID, err := middleware.RequireUserID(c)
+	if err != nil {
+		return
+	}
+
+	workflow, err := ctrl.workflowService.DuplicateExampleWorkflow(c.Request.Context(), exampleID, userID, accountID)
+	if err != nil {
+		middleware.RespondBadRequest(c, err.Error())
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusCreated, workflow)
 }
 
 // getRetryableNodes returns a list of node IDs that can be retried

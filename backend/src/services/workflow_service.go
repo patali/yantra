@@ -1064,7 +1064,54 @@ func (s *WorkflowService) DuplicateExampleWorkflow(ctx context.Context, exampleI
 		return nil, fmt.Errorf("invalid example workflow definition")
 	}
 
-	// Remove workflow-level config that should not be copied
+	// Extract trigger settings from the start node config
+	var schedule *string
+	var webhookPath *string
+	var webhookRequireAuth *bool
+	var timezone *string
+
+	// Look for start node and extract its config
+	if nodes, ok := definition["nodes"].([]interface{}); ok {
+		for _, nodeData := range nodes {
+			node, ok := nodeData.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			nodeType, _ := node["type"].(string)
+			if nodeType == "start" {
+				// Extract config from node.data.config
+				if data, ok := node["data"].(map[string]interface{}); ok {
+					if config, ok := data["config"].(map[string]interface{}); ok {
+						// Extract trigger type and settings
+						if triggerType, ok := config["triggerType"].(string); ok {
+							if triggerType == "webhook" || triggerType == "both" {
+								// Extract webhook settings
+								if path, ok := config["webhookPath"].(string); ok && path != "" {
+									webhookPath = &path
+								}
+								if requireAuth, ok := config["webhookRequireAuth"].(bool); ok {
+									webhookRequireAuth = &requireAuth
+								}
+							}
+							if triggerType == "cron" || triggerType == "both" {
+								// Extract cron settings
+								if cronSchedule, ok := config["cronSchedule"].(string); ok && cronSchedule != "" {
+									schedule = &cronSchedule
+								}
+								if tz, ok := config["timezone"].(string); ok && tz != "" {
+									timezone = &tz
+								}
+							}
+						}
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Remove workflow-level config that should not be copied (use extracted values instead)
 	delete(definition, "schedule")
 	delete(definition, "webhookPath")
 	delete(definition, "webhookRequireAuth")
@@ -1074,11 +1121,15 @@ func (s *WorkflowService) DuplicateExampleWorkflow(ctx context.Context, exampleI
 	name := example.Name
 	description := example.Description
 
-	// Create the workflow
+	// Create the workflow with extracted trigger settings
 	createReq := dto.CreateWorkflowRequest{
-		Name:        name + " (Example)",
-		Description: &description,
-		Definition:  definition,
+		Name:               name + " (Example)",
+		Description:        &description,
+		Definition:         definition,
+		Schedule:           schedule,
+		WebhookPath:        webhookPath,
+		WebhookRequireAuth: webhookRequireAuth,
+		Timezone:           timezone,
 	}
 
 	return s.CreateWorkflow(ctx, createReq, userID, accountID)

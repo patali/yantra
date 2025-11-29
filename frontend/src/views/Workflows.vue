@@ -20,6 +20,12 @@
       </v-col>
     </v-row>
 
+    <v-row v-if="!examplesDismissed">
+      <v-col cols="12">
+        <ExampleWorkflows @dismiss="dismissExamples" />
+      </v-col>
+    </v-row>
+
     <v-row>
       <v-col
         v-for="workflow in workflows"
@@ -162,6 +168,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, reactive } from "vue";
+import ExampleWorkflows from "@/components/ExampleWorkflows.vue";
 import { useRouter } from "vue-router";
 import api from "@/services/api";
 import type { Workflow } from "@/types";
@@ -177,6 +184,9 @@ const workflowToDelete = ref<Workflow | null>(null);
 const snackbar = ref(false);
 const snackbarText = ref("");
 const snackbarColor = ref("success");
+
+const EXAMPLES_DISMISSED_KEY = "yantra_examples_dismissed";
+const examplesDismissed = ref(localStorage.getItem(EXAMPLES_DISMISSED_KEY) === "true");
 
 const fetchWorkflows = async () => {
   try {
@@ -243,6 +253,11 @@ const deleteWorkflow = async () => {
   } finally {
     deleting.value = false;
   }
+};
+
+const dismissExamples = () => {
+  examplesDismissed.value = true;
+  localStorage.setItem(EXAMPLES_DISMISSED_KEY, "true");
 };
 
 const showSnackbar = (text: string, color: string) => {

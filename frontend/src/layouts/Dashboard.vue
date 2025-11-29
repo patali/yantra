@@ -189,7 +189,7 @@
       </v-menu>
     </v-app-bar>
 
-    <v-main>
+    <v-main style="height: 100vh; overflow-y: auto;">
       <router-view />
     </v-main>
   </v-layout>
