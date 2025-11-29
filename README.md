@@ -1,8 +1,14 @@
 # Yantra
 
+**Version 0.1 - Alpha Software**
+
 **A reliable, visual workflow automation platform for building complex business processes without code.**
 
 Yantra lets you design and execute workflows using a visual, node-based editor. What you see in the editor is exactly what executes—no hidden compilation steps, no surprises.
+
+## ⚠️ Important Notice
+
+**This is alpha software (v0.1).** While Yantra has been built with robust architecture and reliability principles, it is **not recommended for production environments** at this time. Use with caution and thoroughly test in development/staging environments before considering any critical use cases.
 
 ## Features
 
