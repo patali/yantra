@@ -1,0 +1,199 @@
+{
+  "name": "Cron Scheduled Workflow",
+  "description": "Fetches users from an API, filters those with even IDs using a conditional node inside a loop accumulator, and sends an email report with only the matching users. Demonstrates the loop accumulator with conditional branching pattern.",
+  "schedule": "0 9 * * *",
+  "timezone": "America/New_York",
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "label": "Scheduled Start",
+      "position": {"x": 300, "y": 100},
+      "data": {
+        "config": {
+          "triggerType": "cron",
+          "cronSchedule": "0 9 * * *",
+          "timezone": "America/New_York"
+        }
+      }
+    },
+    {
+      "id": "http-1",
+      "type": "http",
+      "label": "Fetch Users",
+      "position": {"x": 250, "y": 200},
+      "data": {
+        "config": {
+          "url": "https://jsonplaceholder.typicode.com/users",
+          "method": "GET",
+          "headers": {},
+          "timeout": 30000,
+          "maxRetries": 3
+        }
+      }
+    },
+    {
+      "id": "loop-1",
+      "type": "loop-accumulator",
+      "label": "Loop Accumulator",
+      "position": {"x": 400, "y": 380},
+      "data": {
+        "config": {
+          "arrayPath": "",
+          "itemVariable": "item",
+          "indexVariable": "index",
+          "accumulatorVariable": "accumulated",
+          "accumulationMode": "array",
+          "errorHandling": "skip"
+        }
+      }
+    },
+    {
+      "id": "transform-1",
+      "type": "transform",
+      "label": "Extract Fields",
+      "position": {"x": 100, "y": 420},
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "item.id",
+                    "to": "id"
+                  },
+                  {
+                    "from": "item.name",
+                    "to": "name"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "conditional-1",
+      "type": "conditional",
+      "label": "Check Even ID",
+      "position": {"x": 75, "y": 550},
+      "data": {
+        "config": {
+          "conditions": [
+            {
+              "left": "id % 2",
+              "operator": "eq",
+              "right": "0"
+            }
+          ],
+          "logicalOperator": "AND"
+        }
+      }
+    },
+    {
+      "id": "transform-2",
+      "type": "transform",
+      "label": "Format User",
+      "position": {"x": 150, "y": 730},
+      "data": {
+        "config": {
+          "operations": [
+            {
+              "type": "map",
+              "config": {
+                "mappings": [
+                  {
+                    "from": "input.data.id",
+                    "to": "id"
+                  },
+                  {
+                    "from": "input.data.name",
+                    "to": "name"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "email-1",
+      "type": "email",
+      "label": "Send Report",
+      "position": {"x": 550, "y": 530},
+      "data": {
+        "config": {
+          "to": "reports@example.com",
+          "subject": "Users with Even ID Numbers - Daily Report",
+          "body": "Here are all users with even ID numbers:\n\n{{range $userIndex, $user := .accumulated}}\nUser #{{$user.id}}: {{$user.name}}\n{{end}}\n\n══════════════════════\nTotal Matching Users: {{len .accumulated}}",
+          "isHtml": false,
+          "provider": "resend",
+          "maxRetries": 3,
+          "attachments": [],
+          "cc": "",
+          "bcc": ""
+        }
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "label": "End",
+      "position": {"x": 450, "y": 760}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "target": "http-1"
+    },
+    {
+      "id": "e2",
+      "source": "http-1",
+      "target": "loop-1",
+      "targetHandle": "input"
+    },
+    {
+      "id": "e3",
+      "source": "loop-1",
+      "sourceHandle": "loop-output",
+      "target": "transform-1"
+    },
+    {
+      "id": "e4",
+      "source": "transform-1",
+      "target": "conditional-1"
+    },
+    {
+      "id": "e5",
+      "source": "conditional-1",
+      "sourceHandle": "true",
+      "target": "transform-2",
+      "condition": "data.data == true",
+      "label": "true"
+    },
+    {
+      "id": "e6",
+      "source": "transform-2",
+      "target": "loop-1",
+      "targetHandle": "accumulator-input"
+    },
+    {
+      "id": "e7",
+      "source": "loop-1",
+      "sourceHandle": "output",
+      "target": "email-1"
+    },
+    {
+      "id": "e8",
+      "source": "email-1",
+      "target": "end-1"
+    }
+  ]
+}
+
