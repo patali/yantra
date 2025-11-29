@@ -408,7 +408,7 @@ import "@vue-flow/minimap/dist/style.css";
 
 const route = useRoute();
 const router = useRouter();
-const { addNodes, addEdges, onConnect, removeNodes } = useVueFlow();
+const { addNodes, addEdges, onConnect, removeNodes, getNodes } = useVueFlow();
 
 const workflowId = ref<string | null>(null);
 const workflowName = ref("New Workflow");
@@ -873,7 +873,27 @@ onMounted(() => {
 
   // Handle connections
   onConnect((connection) => {
-    addEdges([connection]);
+    // Check if source node is a conditional node and auto-add condition
+    const nodes = getNodes.value;
+    const sourceNode = nodes.find((n: any) => n.id === connection.source);
+
+    // Cast to any to allow adding custom properties
+    const edge: any = connection;
+
+    if (sourceNode && sourceNode.type === "conditional") {
+      // Automatically add condition based on the source handle
+      const sourceHandle = connection.sourceHandle;
+
+      if (sourceHandle === "true") {
+        edge.condition = "data.data == true";
+        edge.label = "true";
+      } else if (sourceHandle === "false") {
+        edge.condition = "data.data == false";
+        edge.label = "false";
+      }
+    }
+
+    addEdges([edge]);
   });
 
   // Add keyboard listener

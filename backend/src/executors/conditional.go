@@ -184,6 +184,7 @@ func (e *ConditionalExecutor) Execute(ctx context.Context, execCtx ExecutionCont
 		"data":      boolResult, // Primary output: boolean result
 		"result":    boolResult, // Kept for backward compatibility
 		"condition": condition,
+		"input":     execCtx.Input, // Pass through input data for easier access in branches
 	}
 
 	return &ExecutionResult{

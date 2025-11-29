@@ -280,3 +280,59 @@ func TestConditionalExecutorStructuredFormat(t *testing.T) {
 		})
 	}
 }
+
+// TestConditionalExecutorInputPassThrough tests that input is passed through in the output
+func TestConditionalExecutorInputPassThrough(t *testing.T) {
+	executor := NewConditionalExecutor()
+
+	input := map[string]interface{}{
+		"data": map[string]interface{}{
+			"count":   42,
+			"message": "test message",
+			"nested": map[string]interface{}{
+				"field": "value",
+			},
+		},
+	}
+
+	execCtx := ExecutionContext{
+		NodeID: "conditional-node",
+		NodeConfig: map[string]interface{}{
+			"conditions": []interface{}{
+				map[string]interface{}{
+					"left":     "data.count",
+					"operator": "gt",
+					"right":    "10",
+				},
+			},
+			"logicalOperator": "AND",
+		},
+		Input:       input,
+		ExecutionID: "test-execution",
+		AccountID:   "test-account",
+	}
+
+	result, err := executor.Execute(context.Background(), execCtx)
+
+	// Verify execution succeeded
+	assert.NoError(t, err)
+	assert.True(t, result.Success)
+
+	// Verify boolean result
+	assert.Equal(t, true, result.Output["data"])
+	assert.Equal(t, true, result.Output["result"])
+
+	// Verify input is passed through
+	assert.NotNil(t, result.Output["input"])
+	passedInput, ok := result.Output["input"].(map[string]interface{})
+	assert.True(t, ok, "input should be a map")
+
+	// Verify input contains the original data
+	assert.Equal(t, input, passedInput, "passed through input should match original input")
+
+	// Verify nested data is accessible
+	dataMap, ok := passedInput["data"].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, 42, dataMap["count"])
+	assert.Equal(t, "test message", dataMap["message"])
+}

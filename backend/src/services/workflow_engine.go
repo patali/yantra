@@ -1566,24 +1566,41 @@ func (s *WorkflowEngineService) executeLoopAccumulatorWithChildren(
 				}
 			}
 
-			// Accumulate the result based on mode
-			if accumulationMode == "array" {
-				// Add to array
-				if accArray, ok := accumulated.([]interface{}); ok {
-					accumulated = append(accArray, valueToAccumulate)
+			// Skip accumulation of boolean false values ONLY if they came from a conditional node
+			// This handles the case where a conditional node evaluates to false and no subsequent
+			// nodes execute (dead-end branch), leaving the conditional's output as the iteration result.
+			// We check for the "condition" field which is unique to conditional node outputs.
+			// This ensures we don't skip legitimate false values from other node types.
+			shouldSkip := false
+			if boolVal, isBool := valueToAccumulate.(bool); isBool && !boolVal {
+				// Check if this false value came directly from a conditional node
+				// by looking for the "condition" field in the iteration output
+				if _, hasCondition := iterationOutput["condition"]; hasCondition {
+					log.Printf("  ⏭️  Skipping iteration %d (conditional evaluated to false, no path taken)", i)
+					shouldSkip = true
+				}
+			}
 
-					// Check accumulated data size to prevent memory abuse
+			if !shouldSkip {
+				// Accumulate the result based on mode
+				if accumulationMode == "array" {
+					// Add to array
+					if accArray, ok := accumulated.([]interface{}); ok {
+						accumulated = append(accArray, valueToAccumulate)
+
+						// Check accumulated data size to prevent memory abuse
+						if err := checkDataSize(accumulated, "accumulated data"); err != nil {
+							return fmt.Errorf("accumulator size limit exceeded at iteration %d: %w", i, err)
+						}
+					}
+				} else if accumulationMode == "last" {
+					// Replace with latest
+					accumulated = valueToAccumulate
+
+					// Check output size
 					if err := checkDataSize(accumulated, "accumulated data"); err != nil {
 						return fmt.Errorf("accumulator size limit exceeded at iteration %d: %w", i, err)
 					}
-				}
-			} else if accumulationMode == "last" {
-				// Replace with latest
-				accumulated = valueToAccumulate
-
-				// Check output size
-				if err := checkDataSize(accumulated, "accumulated data"); err != nil {
-					return fmt.Errorf("accumulator size limit exceeded at iteration %d: %w", i, err)
 				}
 			}
 		}
