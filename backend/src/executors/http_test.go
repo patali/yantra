@@ -101,8 +101,9 @@ func TestHTTPExecutor(t *testing.T) {
 		// This will make a real HTTP request, so we check for either success or network error
 		if err == nil {
 			assert.True(t, result.Success)
-			// Verify the URL was properly templated with nested data
-			expectedURL := "https://httpbin.org/get?email=test@example.com"
+			// Verify the URL was properly templated with URL encoding
+			// @ symbol should be encoded as %40
+			expectedURL := "https://httpbin.org/get?email=test%40example.com"
 			assert.Equal(t, expectedURL, result.Output["url"])
 		} else {
 			// Network error is acceptable in test environments

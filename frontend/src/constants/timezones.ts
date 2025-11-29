@@ -190,14 +190,14 @@ export function getBrowserTimezone(): string {
  */
 export function getTimezonesWithBrowser(): Array<{ value: string; title: string }> {
   const browserTz = getBrowserTimezone();
-  
+
   // Check if browser timezone is already in the list
   const exists = TIMEZONES.some(tz => tz.value === browserTz);
-  
+
   if (exists || browserTz === "UTC") {
     return TIMEZONES;
   }
-  
+
   // Add browser timezone at the top of the list
   return [
     { value: browserTz, title: `${browserTz} (Browser Detected)` },
@@ -231,11 +231,11 @@ export function formatTimezoneWithOffset(timezone: string): string {
       timeZone: timezone,
       timeZoneName: "short",
     });
-    
+
     const parts = formatter.formatToParts(now);
     const tzPart = parts.find((part) => part.type === "timeZoneName");
     const offset = tzPart?.value || "";
-    
+
     return `${timezone} (${offset})`;
   } catch {
     return timezone;
