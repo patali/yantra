@@ -1,8 +1,25 @@
 # Docker Compose configuration for local development
-# Uses PostgreSQL instance running on localhost (host machine)
 # Run from the monorepo root: docker-compose up --build
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: yantra-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yantra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yantra_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-yantra}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yantra}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   yantra-server:
     build:
       context: .
@@ -11,12 +28,14 @@ services:
     ports:
       - "4701:3000"
     environment:
-      # Use host.docker.internal to connect to PostgreSQL on host machine
-      # For Linux, use extra_hosts or network_mode: host
-      DATABASE_URL: ${DATABASE_URL:-postgresql://yantra:yantra_dev_password@host.docker.internal:5432/yantra?sslmode=disable}
+      # Connect to postgres service using service name as hostname
+      DATABASE_URL: ${DATABASE_URL:-postgresql://yantra:yantra_dev_password@postgres:5432/yantra?sslmode=disable}
       JWT_SECRET: ${JWT_SECRET:-your-dev-jwt-secret-min-32-chars-long}
       NODE_ENV: ${NODE_ENV:-development}
       MIGRATION_API_KEY: ${MIGRATION_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:3000/health"]
@@ -40,3 +59,5 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+volumes:
+  postgres_data:
