@@ -149,7 +149,7 @@ For detailed architecture documentation, see:
 | | `sleep` | Long-term delays (days/weeks/specific dates) |
 | **Data** | `json` | Static/dynamic JSON data |
 | | `json-array` | Arrays with schema validation |
-| | `transform` | Map, extract, parse, stringify |
+| | `transform` | Map, extract, parse, stringify, concat |
 | | `json_to_csv` | Convert JSON to CSV |
 | **Iteration** | `loop` | Iterate over arrays |
 | | `loop-accumulator` | Collect iteration results |

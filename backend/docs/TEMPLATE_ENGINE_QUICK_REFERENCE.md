@@ -105,6 +105,26 @@ Under 18
 {{.name | title}}
 ```
 
+### add - Addition
+```
+{{add .index 1}}
+```
+
+### sub - Subtraction
+```
+{{sub .total .discount}}
+```
+
+### mul - Multiplication
+```
+{{mul .quantity .price}}
+```
+
+### div - Division
+```
+{{div .total .count}}
+```
+
 ## Comparison Operators
 
 | Operator | Description | Example |

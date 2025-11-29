@@ -1,7 +1,5 @@
 # Email Template Examples - Copy & Paste Ready
 
-> 📖 **Complete Workflow Example**: See [EXAMPLE_HTTP_TO_EMAIL_REPORT.md](EXAMPLE_HTTP_TO_EMAIL_REPORT.md) for a full HTTP API → Loop → Email workflow with configuration.
-
 ## 🔁 Loop Accumulator Results
 
 ### Basic List

@@ -1,7 +1,5 @@
 # Email Template Variables Guide
 
-> 💡 **Want a complete working example?** Check out [EXAMPLE_HTTP_TO_EMAIL_REPORT.md](EXAMPLE_HTTP_TO_EMAIL_REPORT.md) - a full HTTP API → Loop → Email workflow.
-
 ## Overview
 
 The email node supports powerful Go template engine features that allow you to dynamically insert data, iterate over lists, apply conditionals, and format output from previous workflow steps.
@@ -517,6 +515,30 @@ Email: {{.email | lower}}
 
 ```
 Name: {{.firstName | title}} {{.lastName | title}}
+```
+
+#### `add` - Addition
+
+```
+Row {{add $index 1}}: {{$item.name}}
+```
+
+#### `sub` - Subtraction
+
+```
+Remaining: {{sub .total .used}}
+```
+
+#### `mul` - Multiplication
+
+```
+Total: ${{mul .quantity .price}}
+```
+
+#### `div` - Division
+
+```
+Average: {{div .sum .count}}
 ```
 
 ### Pipeline Operations

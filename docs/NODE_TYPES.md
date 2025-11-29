@@ -1,6 +1,6 @@
 # Node Types Reference
 
-Yantra provides a variety of node types for building workflows. All nodes follow a standardized input/output format.
+Yantra provides 14 node types for building workflows. All nodes follow a standardized input/output format.
 
 ## Node Categories
 
@@ -13,7 +13,7 @@ Yantra provides a variety of node types for building workflows. All nodes follow
 | | `sleep` | Long-term delays (days/weeks/specific dates) |
 | **Data** | `json` | Static/dynamic JSON data |
 | | `json-array` | Arrays with schema validation |
-| | `transform` | Map, extract, parse, stringify |
+| | `transform` | Map, extract, parse, stringify, concat |
 | | `json_to_csv` | Convert JSON to CSV |
 | **Iteration** | `loop` | Iterate over arrays |
 | | `loop-accumulator` | Collect iteration results |
@@ -93,8 +93,8 @@ Every node returns an output object that **always includes a `data` field** cont
   ```
 
 #### Transform Node
-- **Purpose**: Map, extract, parse, or stringify data
-- **Operations**: extract, map, parse, stringify
+- **Purpose**: Map, extract, parse, stringify, or concatenate data
+- **Operations**: extract, map, parse, stringify, concat
 - **Output**:
   ```json
   {
@@ -140,13 +140,13 @@ Every node returns an output object that **always includes a `data` field** cont
 
 #### Loop Accumulator Node
 - **Purpose**: Collect and accumulate results from loop iterations
-- **Configuration**: Accumulation mode (append, merge, etc.)
+- **Configuration**: Accumulation mode (default: "array")
 - **Output**:
   ```json
   {
     "data": [1, 2, 3, 4, 5],
     "iteration_count": 5,
-    "accumulationMode": "append"
+    "accumulationMode": "array"
   }
   ```
 

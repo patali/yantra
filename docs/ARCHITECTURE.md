@@ -214,7 +214,7 @@ CREATE TABLE sleep_schedules (
 ```
 
 **Sleep Scheduler:**
-- Polls `sleep_schedules` every minute
+- Polls `sleep_schedules` every 5 seconds
 - Finds executions ready to wake
 - Resumes workflow from sleep node
 - Worker-friendly (no blocking)
