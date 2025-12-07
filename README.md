@@ -13,6 +13,7 @@ Yantra lets you design and execute workflows using a visual, node-based editor. 
 ## Features
 
 - 🎨 **Visual Workflow Design** - Drag-and-drop WYSIWYG editor
+- 🤖 **AI-Powered Generation** - Create workflows from natural language descriptions
 - 🔒 **Guaranteed Reliability** - Transactional outbox pattern, checkpointing, fault tolerance
 - ⚡ **Powerful Integrations** - HTTP APIs, Email, Slack, JSON processing, loops, conditionals
 - 🔄 **Flexible Triggers** - Manual, scheduled (cron), webhooks, API calls
@@ -90,6 +91,7 @@ yantra/
 - **[Configuration](./docs/CONFIGURATION.md)** - Environment variables and settings
 - **[API Reference](./docs/API.md)** - REST API documentation
 - **[Node Types](./docs/NODE_TYPES.md)** - Available workflow nodes
+- **[AI Workflow Generator](./docs/AI_WORKFLOW_GENERATOR.md)** - Generate workflows from natural language
 - **[Architecture](./docs/ARCHITECTURE.md)** - System design and principles
 - **[Deployment](./docs/DEPLOYMENT.md)** - Production deployment guide
 
@@ -145,6 +147,7 @@ Key environment variables:
 |----------|-------------|----------|
 | `DATABASE_URL` | PostgreSQL connection string | Yes |
 | `JWT_SECRET` | JWT signing secret (min 32 chars) | Yes |
+| `OPENAI_API_KEY` | OpenAI API key for AI workflow generation | For AI features |
 | `SMTP_*` | Email configuration | For email nodes |
 | `VITE_API_URL` | Frontend API URL | Build time |
 

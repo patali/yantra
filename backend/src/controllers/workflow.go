@@ -15,12 +15,14 @@ import (
 )
 
 type WorkflowController struct {
-	workflowService *services.WorkflowService
+	workflowService   *services.WorkflowService
+	aiWorkflowService *services.AIWorkflowService
 }
 
 func NewWorkflowController(workflowService *services.WorkflowService) *WorkflowController {
 	return &WorkflowController{
-		workflowService: workflowService,
+		workflowService:   workflowService,
+		aiWorkflowService: services.NewAIWorkflowService(),
 	}
 }
 
@@ -45,6 +47,7 @@ func (ctrl *WorkflowController) RegisterRoutes(rg *gin.RouterGroup, authService 
 		workflows.POST("/:id/executions/:executionId/resume", ctrl.ResumeExecution)        // Resume execution endpoint
 		workflows.POST("/:id/versions/restore", ctrl.RestoreVersion)                       // Frontend endpoint
 		workflows.POST("/:id/duplicate", ctrl.DuplicateWorkflow)                           // Frontend endpoint
+		workflows.POST("/generate", ctrl.GenerateWorkflowWithAI)                           // AI workflow generation endpoint
 	}
 
 	// Webhook routes (public, no auth middleware, but with rate limiting)
@@ -749,4 +752,23 @@ func (ctrl *WorkflowController) RegenerateWebhookSecret(c *gin.Context) {
 		"secret":  plainSecret,
 		"message": "Webhook secret regenerated. Save this secret securely - it cannot be retrieved again.",
 	})
+}
+
+// GenerateWorkflowWithAI generates a workflow using AI based on natural language description
+// POST /api/workflows/generate
+func (ctrl *WorkflowController) GenerateWorkflowWithAI(c *gin.Context) {
+	var req services.GenerateWorkflowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.RespondBadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	// Generate workflow using AI
+	response, err := ctrl.aiWorkflowService.GenerateWorkflow(req)
+	if err != nil {
+		middleware.RespondInternalError(c, "Failed to generate workflow: "+err.Error())
+		return
+	}
+
+	middleware.RespondSuccess(c, http.StatusOK, response)
 }
